@@ -1,7 +1,6 @@
 #include "Synthimi.hpp"
 #include <libremidi/message.hpp>
 #include <Gamma/../src/Domain.cpp>
-#include <kfr/dsp/oscillators.hpp>
 
 #include <r8brain-free-src/r8bbase.cpp>
 
@@ -84,15 +83,15 @@ void Synthimi::process_midi()
           {
             porta_samples = 1. + this->inputs.portamento * upsample_factor * this->settings.rate;
             porta_cur_samples = 0;
-            porta_from = voices[voices.size() - 2].pitch;
-            porta_to = voices[voices.size() - 1].pitch;
+            porta_from = voices[voices.size() - 2].main.pitch;
+            porta_to = voices[voices.size() - 1].main.pitch;
           }
           else
           {
             porta_samples = 0;
             porta_cur_samples = 0;
-            porta_from = voices.back().pitch;
-            porta_to = voices.back().pitch;
+            porta_from = voices.back().main.pitch;
+            porta_to = voices.back().main.pitch;
             const bool had_released = mono.amp_adsr.released();
             mono = voices.back();
             if(!had_released)
@@ -119,7 +118,7 @@ void Synthimi::process_midi()
       note_off:
         for(auto it = voices.rbegin(); it != voices.rend(); )
         {
-          if(it->pitch == m.bytes[1])
+          if(it->main.pitch == m.bytes[1])
           {
             switch(inputs.poly_mode)
             {
@@ -138,13 +137,13 @@ void Synthimi::process_midi()
 
                   if(voices.size() >= 2)
                   {
-                    porta_from = voices[voices.size() - 2].pitch;
-                    porta_to = voices[voices.size() - 1].pitch;
+                    porta_from = voices[voices.size() - 2].main.pitch;
+                    porta_to = voices[voices.size() - 1].main.pitch;
                   }
                   else
                   {
-                    porta_from = voices.back().pitch;
-                    porta_to = voices.back().pitch;
+                    porta_from = voices.back().main.pitch;
+                    porta_to = voices.back().main.pitch;
                   }
                 }
                 break;
@@ -205,16 +204,16 @@ void Synthimi::process_voices(int frames, double* l, double* r)
         {
           const double porta_increment = (porta_to - porta_from) / porta_samples;
           porta_cur_samples++;
-          mono.pitch += porta_increment;
+          mono.increment_pitch(porta_increment);
         }
         else
         {
-          mono.pitch = porta_to;
+          mono.set_pitch(porta_to);
         }
 
-        double res = mono.run(*this);
-        l[i] += res;
-        r[i] += res;
+        auto [lx, rx] = mono.run(*this);
+        l[i] += lx;
+        r[i] += rx;
       }
 
       break;
@@ -228,9 +227,9 @@ void Synthimi::process_voices(int frames, double* l, double* r)
       {
         for(auto& voice : this->voices.active)
         {
-          double res = voice.run(*this);
-          l[i] += res;
-          r[i] += res;
+          auto [lx, rx] = voice.run(*this);
+          l[i] += lx;
+          r[i] += rx;
         }
       }
       break;
@@ -292,9 +291,9 @@ void Voice::update_envelope(Synthimi& synth)
   filt_adsr.release(synth.inputs.filt_release);
 }
 
-double Voice::run(Synthimi& synth)
+double Subvoice::run(Voice& v, Synthimi& s)
 {
-  auto& p = synth.inputs;
+  auto& p = s.inputs;
 
   double x{};
 
@@ -363,7 +362,7 @@ double Voice::run(Synthimi& synth)
   }
 
   // 2. Increase the phase
-  const double rf = ossia::two_pi / double(upsample_factor * synth.settings.rate);
+  const double rf = ossia::two_pi / double(upsample_factor * s.settings.rate);
 
   this->phase[0] += m2f(p.osc0_pitch + p.osc0_oct * 12. + pitch) * rf;
   this->phase[1] += m2f(p.osc1_pitch + p.osc1_oct * 12. + pitch) * rf;
@@ -378,17 +377,34 @@ double Voice::run(Synthimi& synth)
     this->phase[2] -= ossia::two_pi;
   if(this->phase[3] > ossia::two_pi)
     this->phase[3] -= ossia::two_pi;
+  return x;
+}
+
+Frame Voice::run(Synthimi& synth)
+{
+  auto& p = synth.inputs;
+
+  const double x0 = main.run(*this, synth) * main.ampl;
+  Frame res = {x0, x0};
+  for(int i = 0; i < p.unison; i++)
+  {
+    const double x = unison[i].run(*this, synth);
+    res.l += unison[i].ampl * unison[i].pan * x;
+    res.r += unison[i].ampl * (1. - unison[i].pan) * x;
+  }
 
   // 3. Apply envelope
 
-  x *= this->amp_adsr() * ampl;
+  const double env = this->amp_adsr();
+  res.l *= env;
+  res.r *= env;
 
   // 4. Apply filter
   // we'll also fetch it from a lib.. DSPFilters it is !
   if(synth.inputs.filt_env)
   {
     double cutoff_mult = this->filt_adsr();
-    double* arr[1] = { &x };
+    double* arr[2] = { &res.l, &res.r };
 
     double cutf = cutoff_mult * p.filt_cutoff;
 
@@ -419,12 +435,13 @@ double Voice::run(Synthimi& synth)
     }
   }
 
-  return x;
+  return res;
 }
 
 void Voice::stop()
 {
   this->amp_adsr.release();
 }
+
 
 }

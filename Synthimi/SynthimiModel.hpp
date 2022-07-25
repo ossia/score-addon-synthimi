@@ -12,6 +12,12 @@
 
 #include <rnd/random.hpp>
 #include <r8brain-free-src/CDSPResampler.h>
+
+#include <boost/container/static_vector.hpp>
+
+#include <memory>
+#include <ossia/detail/math.hpp>
+
 namespace Synthimi
 {
 // Let's define a generic port for the waveform chooser
@@ -46,13 +52,20 @@ inline auto m2f(double m)
 }
 
 class Synthimi;
+struct Voice;
+
+struct Frame {
+  double l, r;
+};
+
 static constexpr int oscillators = 4;
 struct Subvoice
 {
-  double pitchdelta = 0., ampl = 0., pan = 0.;
+  double pitch = 0., ampl = 0., pan = 0.;
   double phase[oscillators] = { 0., 0., 0., 0. };
-};
 
+  double run(Voice& v, Synthimi& s);
+};
 struct Voice
 {
 
@@ -62,30 +75,50 @@ struct Voice
   Voice& operator=(const Voice&) noexcept = default;
   Voice& operator=(Voice&&) noexcept = default;
   explicit Voice(double pitch, double ampl) noexcept
-      : pitch{pitch}
-      , ampl{ampl}
   {
-
+    main.pitch = pitch;
+    main.ampl = ampl;
+    main.pan = 0.5;
+    for(int i = 0; i < 16; i++)
+    {
+      unison[i].pitch = pitch + 1. * (double(rand()) / RAND_MAX) * (i / 16.);
+      unison[i].ampl = ampl * ((16. - i) / 16.);
+      unison[i].pan = abs((double(rand()) / RAND_MAX)) / 8. + (0.5 - 1. / 8.);
+    }
   }
 
+  void set_pitch(double p) noexcept
+  {
+    for(int i = 0; i < 16; i++)
+    {
+      unison[i].pitch += (p - main.pitch);
+    }
+    main.pitch = p;
+  }
+  void increment_pitch(double p) noexcept
+  {
+    main.pitch += p;
+
+    for(int i = 0; i < 16; i++)
+    {
+      unison[i].pitch += p;
+    }
+  }
   void update_envelope(Synthimi& synth);
-  double run(Synthimi& synth);
+  Frame run(Synthimi& synth);
 
   void stop();
 
   // If we do pitch bend we'll have to know where I guess
-  double pitch = {};
-  double ampl = {};
-  double phase[oscillators] = { 0., 0., 0., 0. };
-
-  //Subvoice unison[16];
+  Subvoice main;
+  Subvoice unison[16];
 
   gam::ADSR<double, double> amp_adsr;
   gam::ADSR<double, double> filt_adsr;
 
   // let's rock
   static constexpr int    maxOrder = 7;
-  static constexpr auto   chans = 1;
+  static constexpr auto   chans = 2;
   Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::LowPass, chans>    lowpassFilter{128};
   Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::HighPass, chans>    highpassFilter{128};
 };
