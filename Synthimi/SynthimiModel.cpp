@@ -1,8 +1,9 @@
 #include "Synthimi.hpp"
-#include <libremidi/message.hpp>
-#include <Gamma/../src/Domain.cpp>
-#include <kfr/dsp/oscillators.hpp>
 
+#include <kfr/dsp/oscillators.hpp>
+#include <libremidi/message.hpp>
+
+#include <Gamma/../src/Domain.cpp>
 #include <r8brain-free-src/r8bbase.cpp>
 
 // This is a bit slow to build and I want to go fast tonight... so maybe...
@@ -10,7 +11,6 @@
 // #include <ossia/network/dataspace/gain.hpp>
 // #include <ossia/network/dataspace/time.hpp>
 // #include <ossia/network/dataspace/value_with_unit.hpp>
-
 
 namespace Synthimi
 {
@@ -20,13 +20,15 @@ void Synthimi::prepare(halp::setup info)
   double upsample = upsample_factor * info.rate;
   this->settings = info;
   gam::sampleRate(upsample);
-  this->resample_l = std::make_unique<r8b::CDSPResampler24>(upsample, info.rate, upsample_factor * info.frames);
-  this->resample_r = std::make_unique<r8b::CDSPResampler24>(upsample, info.rate, upsample_factor * info.frames);
+  this->resample_l = std::make_unique<r8b::CDSPResampler24>(
+      upsample, info.rate, upsample_factor * info.frames);
+  this->resample_r = std::make_unique<r8b::CDSPResampler24>(
+      upsample, info.rate, upsample_factor * info.frames);
 }
 
 void Synthimi::update_pitches()
 {
-  for(auto& v: voices.active)
+  for (auto& v : voices.active)
   {
     v.set_freq(*this);
   }
@@ -75,24 +77,26 @@ void Synthimi::operator()(halp::tick t)
 void Synthimi::process_midi()
 {
   auto& voices = this->voices.active;
-  for(auto m : this->inputs.midi.midi_messages)
+  for (auto m : this->inputs.midi.midi_messages)
   {
     // We get a note -> we add a voice
     // let's use libremidi to see if we have a note
 
-    switch ((libremidi::message_type) (m.bytes[0] & 0xF0))
+    switch ((libremidi::message_type)(m.bytes[0] & 0xF0))
     {
       case libremidi::message_type::NOTE_ON:
       {
         auto note = m.bytes[1];
-        if(auto ampl = m.bytes[2] / 127.; ampl > 0)
+        if (auto ampl = m.bytes[2] / 127.; ampl > 0)
         {
           voices.emplace_back(note, ampl);
           voices.back().set_freq(*this);
-          if(voices.size() >= 2)
+          if (voices.size() >= 2)
           {
-            porta_samples = 1. + this->inputs.portamento * upsample_factor * this->settings.rate;
-            if(porta_cur_samples > 0)
+            porta_samples = 1.
+                            + this->inputs.portamento * upsample_factor
+                                  * this->settings.rate;
+            if (porta_cur_samples > 0)
             {
               porta_cur_samples = 0;
             }
@@ -110,7 +114,7 @@ void Synthimi::process_midi()
             porta_to = voices.back().main.pitch;
             const bool had_released = mono.amp_adsr.released();
             mono = voices.back();
-            if(!had_released)
+            if (!had_released)
             {
               mono.amp_adsr.resetSoft();
               mono.filt_adsr.resetSoft();
@@ -132,15 +136,15 @@ void Synthimi::process_midi()
       case libremidi::message_type::NOTE_OFF:
       {
       note_off:
-        for(auto it = voices.rbegin(); it != voices.rend(); )
+        for (auto it = voices.rbegin(); it != voices.rend();)
         {
-          if(it->main.pitch == m.bytes[1])
+          if (it->main.pitch == m.bytes[1])
           {
-            switch(inputs.poly_mode)
+            switch (inputs.poly_mode)
             {
               case decltype(inputs.poly_mode.value)::Mono:
               {
-                if(voices.size() == 1)
+                if (voices.size() == 1)
                 {
                   // The currently playing note needs release if we kill it
                   mono.stop();
@@ -149,9 +153,9 @@ void Synthimi::process_midi()
                 }
                 else
                 {
-                  it = decltype(it) (voices.erase(std::next(it).base()));
+                  it = decltype(it)(voices.erase(std::next(it).base()));
 
-                  if(voices.size() >= 2)
+                  if (voices.size() >= 2)
                   {
                     porta_from = voices[voices.size() - 2].main.pitch;
                     porta_to = voices[voices.size() - 1].main.pitch;
@@ -190,11 +194,11 @@ void Synthimi::process_midi()
 
 void Synthimi::process_voices(int frames, double* l, double* r)
 {
-  for(auto it = this->voices.active.begin(); it != this->voices.active.end(); )
+  for (auto it = this->voices.active.begin(); it != this->voices.active.end();)
   {
     auto& voice = *it;
     voice.update_envelope(*this);
-    if(voice.amp_adsr.done())
+    if (voice.amp_adsr.done())
     {
       it = this->voices.active.erase(it);
     }
@@ -207,18 +211,19 @@ void Synthimi::process_voices(int frames, double* l, double* r)
   // For each frame, process all the running voices
   const int upsample_frames = frames * upsample_factor;
   this->mono.update_envelope(*this);
-  switch(inputs.poly_mode)
+  switch (inputs.poly_mode)
   {
     case decltype(inputs.poly_mode.value)::Mono:
     {
-      if(this->mono.amp_adsr.done() || (porta_from == -1 && porta_to == -1))
+      if (this->mono.amp_adsr.done() || (porta_from == -1 && porta_to == -1))
         return;
 
-      for(int i = 0; i < upsample_frames; i++)
+      for (int i = 0; i < upsample_frames; i++)
       {
-        if(porta_cur_samples < porta_samples && porta_to != porta_from)
+        if (porta_cur_samples < porta_samples && porta_to != porta_from)
         {
-          const double porta_increment = (porta_to - porta_from) / porta_samples;
+          const double porta_increment
+              = (porta_to - porta_from) / porta_samples;
           porta_cur_samples++;
           mono.increment_pitch(*this, porta_increment);
         }
@@ -236,12 +241,12 @@ void Synthimi::process_voices(int frames, double* l, double* r)
     }
     case decltype(inputs.poly_mode.value)::Poly:
     {
-      if(this->voices.active.empty())
+      if (this->voices.active.empty())
         return;
 
-      for(int i = 0; i < upsample_frames; i++)
+      for (int i = 0; i < upsample_frames; i++)
       {
-        for(auto& voice : this->voices.active)
+        for (auto& voice : this->voices.active)
         {
           auto [lx, rx] = voice.run(*this);
           l[i] += lx;
@@ -259,9 +264,9 @@ void Synthimi::postprocess(int frames, double* l, double* r)
 
   // Postprocess
   const double drive = 1. + 10. * this->inputs.drive;
-  if(this->inputs.drive > 0)
+  if (this->inputs.drive > 0)
   {
-    for(int i = 0; i < upsample_frames; i++)
+    for (int i = 0; i < upsample_frames; i++)
     {
       l[i] = std::tanh(drive * l[i]);
       r[i] = std::tanh(drive * r[i]);
@@ -279,7 +284,7 @@ void Synthimi::postprocess(int frames, double* l, double* r)
 
 static double wave(Waveform::enum_type t, double ph) noexcept
 {
-  switch(t)
+  switch (t)
   {
     case Waveform::Sine:
       return kfr::sine(ph);
@@ -293,11 +298,10 @@ static double wave(Waveform::enum_type t, double ph) noexcept
       return 2. * double(std::rand()) / RAND_MAX - 1.;
   }
 }
-__attribute__((flatten))
-void Voice::set_freq(Synthimi& synth)
+__attribute__((flatten)) void Voice::set_freq(Synthimi& synth)
 {
   main.set_freq(synth);
-  for(auto& sub : unison)
+  for (auto& sub : unison)
   {
     sub.set_freq(synth);
   }
@@ -315,8 +319,7 @@ void Voice::update_envelope(Synthimi& synth)
   filt_adsr.sustain(synth.inputs.filt_sustain);
   filt_adsr.release(synth.inputs.filt_release);
 }
-__attribute__((flatten))
-double Subvoice::run(Voice& v, Synthimi& s)
+__attribute__((flatten)) double Subvoice::run(Voice& v, Synthimi& s)
 {
   auto& p = s.inputs;
 
@@ -324,7 +327,7 @@ double Subvoice::run(Voice& v, Synthimi& s)
 
   // 1. Run the oscillators
   double wf[4] = {0.};
-  switch(p.matrix)
+  switch (p.matrix)
   {
     case decltype(p.matrix)::Sum:
     {
@@ -378,7 +381,8 @@ double Subvoice::run(Voice& v, Synthimi& s)
       wf[0] = p.osc0_amp * wave(p.osc0_waveform, this->phase[0]);
       wf[1] = p.osc1_amp * wave(p.osc1_waveform, wf[0] + this->phase[1]);
       wf[2] = p.osc2_amp * wave(p.osc2_waveform, this->phase[2]);
-      wf[3] = p.osc3_amp * wave(p.osc3_waveform, wf[1] + wf[2] + this->phase[3]);
+      wf[3]
+          = p.osc3_amp * wave(p.osc3_waveform, wf[1] + wf[2] + this->phase[3]);
 
       x = wf[3];
 
@@ -392,18 +396,17 @@ double Subvoice::run(Voice& v, Synthimi& s)
   this->phase[2] += this->phase_incr[2];
   this->phase[3] += this->phase_incr[3];
 
-  if(this->phase[0] > ossia::two_pi)
+  if (this->phase[0] > ossia::two_pi)
     this->phase[0] -= ossia::two_pi;
-  if(this->phase[1] > ossia::two_pi)
+  if (this->phase[1] > ossia::two_pi)
     this->phase[1] -= ossia::two_pi;
-  if(this->phase[2] > ossia::two_pi)
+  if (this->phase[2] > ossia::two_pi)
     this->phase[2] -= ossia::two_pi;
-  if(this->phase[3] > ossia::two_pi)
+  if (this->phase[3] > ossia::two_pi)
     this->phase[3] -= ossia::two_pi;
   return x;
 }
-__attribute__((flatten))
-void Subvoice::set_freq(Synthimi& s)
+__attribute__((flatten)) void Subvoice::set_freq(Synthimi& s)
 {
   const auto& p = s.inputs;
   const double rf = ossia::two_pi / double(upsample_factor * s.settings.rate);
@@ -419,7 +422,7 @@ Frame Voice::run(Synthimi& synth)
 
   const double x0 = main.run(*this, synth) * main.ampl;
   Frame res = {x0, x0};
-  for(int i = 0; i < p.unison; i++)
+  for (int i = 0; i < p.unison; i++)
   {
     const double x = unison[i].run(*this, synth);
     res.l += unison[i].ampl * unison[i].pan * x;
@@ -434,21 +437,21 @@ Frame Voice::run(Synthimi& synth)
 
   // 4. Apply filter
   // we'll also fetch it from a lib.. DSPFilters it is !
-  if(synth.inputs.filt_env)
+  if (synth.inputs.filt_env)
   {
     double cutoff_mult = this->filt_adsr();
-    double* arr[2] = { &res.l, &res.r };
+    double* arr[2] = {&res.l, &res.r};
 
     double cutf = cutoff_mult * p.filt_cutoff;
 
     Dsp::Params params;
     params[0] = upsample_factor * synth.settings.rate; // sample rate
-    params[2] = synth.inputs.filt_res; // Q
-    switch(p.filt_type)
+    params[2] = synth.inputs.filt_res;                 // Q
+    switch (p.filt_type)
     {
       case decltype(p.filt_type)::LPF:
       {
-        if(cutf < 20.)
+        if (cutf < 20.)
           cutf = 20.;
         params[1] = cutf; // cutoff frequency
         this->lowpassFilter.setParams(params);
@@ -458,7 +461,7 @@ Frame Voice::run(Synthimi& synth)
       }
       case decltype(p.filt_type)::HPF:
       {
-        if(cutf > 18000.)
+        if (cutf > 18000.)
           cutf = 18000.;
         params[1] = cutf; // cutoff frequency
         this->highpassFilter.setParams(params);
@@ -475,6 +478,5 @@ void Voice::stop()
 {
   this->amp_adsr.release();
 }
-
 
 }
