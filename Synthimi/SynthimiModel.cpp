@@ -1,6 +1,7 @@
 #include "Synthimi.hpp"
 #include <libremidi/message.hpp>
 #include <Gamma/../src/Domain.cpp>
+#include <kfr/dsp/oscillators.hpp>
 
 #include <r8brain-free-src/r8bbase.cpp>
 
@@ -21,6 +22,14 @@ void Synthimi::prepare(halp::setup info)
   gam::sampleRate(upsample);
   this->resample_l = std::make_unique<r8b::CDSPResampler24>(upsample, info.rate, upsample_factor * info.frames);
   this->resample_r = std::make_unique<r8b::CDSPResampler24>(upsample, info.rate, upsample_factor * info.frames);
+}
+
+void Synthimi::update_pitches()
+{
+  for(auto& v: voices.active)
+  {
+    v.set_freq(*this);
+  }
 }
 
 void Synthimi::operator()(halp::tick t)
@@ -79,11 +88,18 @@ void Synthimi::process_midi()
         if(auto ampl = m.bytes[2] / 127.; ampl > 0)
         {
           voices.emplace_back(note, ampl);
+          voices.back().set_freq(*this);
           if(voices.size() >= 2)
           {
             porta_samples = 1. + this->inputs.portamento * upsample_factor * this->settings.rate;
-            porta_cur_samples = 0;
-            porta_from = voices[voices.size() - 2].main.pitch;
+            if(porta_cur_samples > 0)
+            {
+              porta_cur_samples = 0;
+            }
+            else
+            {
+              porta_from = voices[voices.size() - 2].main.pitch;
+            }
             porta_to = voices[voices.size() - 1].main.pitch;
           }
           else
@@ -204,11 +220,11 @@ void Synthimi::process_voices(int frames, double* l, double* r)
         {
           const double porta_increment = (porta_to - porta_from) / porta_samples;
           porta_cur_samples++;
-          mono.increment_pitch(porta_increment);
+          mono.increment_pitch(*this, porta_increment);
         }
         else
         {
-          mono.set_pitch(porta_to);
+          mono.set_pitch(*this, porta_to);
         }
 
         auto [lx, rx] = mono.run(*this);
@@ -277,6 +293,15 @@ static double wave(Waveform::enum_type t, double ph) noexcept
       return 2. * double(std::rand()) / RAND_MAX - 1.;
   }
 }
+__attribute__((flatten))
+void Voice::set_freq(Synthimi& synth)
+{
+  main.set_freq(synth);
+  for(auto& sub : unison)
+  {
+    sub.set_freq(synth);
+  }
+}
 
 void Voice::update_envelope(Synthimi& synth)
 {
@@ -290,7 +315,7 @@ void Voice::update_envelope(Synthimi& synth)
   filt_adsr.sustain(synth.inputs.filt_sustain);
   filt_adsr.release(synth.inputs.filt_release);
 }
-
+__attribute__((flatten))
 double Subvoice::run(Voice& v, Synthimi& s)
 {
   auto& p = s.inputs;
@@ -362,12 +387,10 @@ double Subvoice::run(Voice& v, Synthimi& s)
   }
 
   // 2. Increase the phase
-  const double rf = ossia::two_pi / double(upsample_factor * s.settings.rate);
-
-  this->phase[0] += m2f(p.osc0_pitch + p.osc0_oct * 12. + pitch) * rf;
-  this->phase[1] += m2f(p.osc1_pitch + p.osc1_oct * 12. + pitch) * rf;
-  this->phase[2] += m2f(p.osc2_pitch + p.osc2_oct * 12. + pitch) * rf;
-  this->phase[3] += m2f(p.osc3_pitch + p.osc3_oct * 12. + pitch) * rf;
+  this->phase[0] += this->phase_incr[0];
+  this->phase[1] += this->phase_incr[1];
+  this->phase[2] += this->phase_incr[2];
+  this->phase[3] += this->phase_incr[3];
 
   if(this->phase[0] > ossia::two_pi)
     this->phase[0] -= ossia::two_pi;
@@ -378,6 +401,16 @@ double Subvoice::run(Voice& v, Synthimi& s)
   if(this->phase[3] > ossia::two_pi)
     this->phase[3] -= ossia::two_pi;
   return x;
+}
+__attribute__((flatten))
+void Subvoice::set_freq(Synthimi& s)
+{
+  const auto& p = s.inputs;
+  const double rf = ossia::two_pi / double(upsample_factor * s.settings.rate);
+  this->phase_incr[0] = m2f(p.osc0_pitch + p.osc0_oct * 12. + pitch) * rf;
+  this->phase_incr[1] = m2f(p.osc1_pitch + p.osc1_oct * 12. + pitch) * rf;
+  this->phase_incr[2] = m2f(p.osc2_pitch + p.osc2_oct * 12. + pitch) * rf;
+  this->phase_incr[3] = m2f(p.osc3_pitch + p.osc3_oct * 12. + pitch) * rf;
 }
 
 Frame Voice::run(Synthimi& synth)

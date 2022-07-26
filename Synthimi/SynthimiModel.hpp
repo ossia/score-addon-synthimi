@@ -46,9 +46,10 @@ struct Waveform
   }
 };
 
+
 inline auto m2f(double m)
 {
-  return (440.0 * ossia::exp2((m - 69.0) / 12.0));
+  return (440.0 * std::exp2((m - 69.0) / 12.0));
 }
 
 class Synthimi;
@@ -62,9 +63,11 @@ static constexpr int oscillators = 4;
 struct Subvoice
 {
   double pitch = 0., ampl = 0., pan = 0.;
+  double phase_incr[oscillators] = { 0., 0., 0., 0. };
   double phase[oscillators] = { 0., 0., 0., 0. };
 
   double run(Voice& v, Synthimi& s);
+  void set_freq(Synthimi& synth);
 };
 struct Voice
 {
@@ -87,15 +90,19 @@ struct Voice
     }
   }
 
-  void set_pitch(double p) noexcept
+  void set_pitch(Synthimi& synth, double p) noexcept
   {
-    for(int i = 0; i < 16; i++)
+    if(main.pitch != p)
     {
-      unison[i].pitch += (p - main.pitch);
+      for(int i = 0; i < 16; i++)
+      {
+        unison[i].pitch += (p - main.pitch);
+      }
+      main.pitch = p;
+      set_freq(synth);
     }
-    main.pitch = p;
   }
-  void increment_pitch(double p) noexcept
+  void increment_pitch(Synthimi& synth, double p) noexcept
   {
     main.pitch += p;
 
@@ -103,7 +110,10 @@ struct Voice
     {
       unison[i].pitch += p;
     }
+    set_freq(synth);
   }
+
+  void set_freq(Synthimi& synth);
   void update_envelope(Synthimi& synth);
   Frame run(Synthimi& synth);
 
@@ -145,23 +155,31 @@ public:
     // that afterwards :-)
     halp::knob_f32<"Osc 1 Amp.", halp::range{0., 1., 1.}> osc0_amp;
     struct : Waveform { halp_meta(name, "Osc 1 Wave") } osc0_waveform;
-    halp::knob_f32<"Osc 1 Pitch", halp::range{-12, 12, 0.}> osc0_pitch;
-    halp::knob_i32<"Osc 1 Oct", halp::irange{-5, 5, 0}> osc0_oct;
+    struct : halp::knob_f32<"Osc 1 Pitch", halp::range{-12, 12, 0.}>
+    { void update(Synthimi& s) { s.update_pitches(); } } osc0_pitch;
+    struct : halp::knob_i32<"Osc 1 Oct", halp::irange{-5, 5, 0}>
+    { void update(Synthimi& s) { s.update_pitches(); } } osc0_oct;
 
     halp::knob_f32<"Osc 2 Amp.", halp::range{0., 1., 1.}> osc1_amp;
     struct : Waveform { halp_meta(name, "Osc 2 Wave") } osc1_waveform;
-    halp::knob_f32<"Osc 2 Pitch", halp::range{-12, 12, 0.}> osc1_pitch;
-    halp::knob_i32<"Osc 2 Oct", halp::irange{-5, 5, 0}> osc1_oct;
+    struct : halp::knob_f32<"Osc 2 Pitch", halp::range{-12, 12, 0.}>
+    { void update(Synthimi& s) { s.update_pitches(); } } osc1_pitch;
+    struct : halp::knob_i32<"Osc 2 Oct", halp::irange{-5, 5, 0}>
+    { void update(Synthimi& s) { s.update_pitches(); } } osc1_oct;
 
     halp::knob_f32<"Osc 3 Amp.", halp::range{0., 1., 1.}> osc2_amp;
     struct : Waveform { halp_meta(name, "Osc 3 Wave") } osc2_waveform;
-    halp::knob_f32<"Osc 3 Pitch", halp::range{-12, 12, 0.}> osc2_pitch;
-    halp::knob_i32<"Osc 3 Oct", halp::irange{-5, 5, 0}> osc2_oct;
+    struct : halp::knob_f32<"Osc 3 Pitch", halp::range{-12, 12, 0.}>
+    { void update(Synthimi& s) { s.update_pitches(); } } osc2_pitch;
+    struct : halp::knob_i32<"Osc 3 Oct", halp::irange{-5, 5, 0}>
+    { void update(Synthimi& s) { s.update_pitches(); } } osc2_oct;
 
     halp::knob_f32<"Osc 4 Amp.", halp::range{0., 1., 1.}> osc3_amp;
     struct : Waveform { halp_meta(name, "Osc 4 Wave") } osc3_waveform;
-    halp::knob_f32<"Osc 4 Pitch", halp::range{-12, 12, 0.}> osc3_pitch;
-    halp::knob_i32<"Osc 4 Oct", halp::irange{-5, 5, 0}> osc3_oct;
+    struct : halp::knob_f32<"Osc 4 Pitch", halp::range{-12, 12, 0.}>
+    { void update(Synthimi& s) { s.update_pitches(); } } osc3_pitch;
+    struct : halp::knob_i32<"Osc 4 Oct", halp::irange{-5, 5, 0}>
+    { void update(Synthimi& s) { s.update_pitches(); } } osc3_oct;
 
     halp::knob_f32<"Amp Attack", halp::range{0., 1., 0.1}> amp_attack;
     halp::knob_f32<"Amp Decay", halp::range{0., 1., 0.1}> amp_decay;
@@ -193,6 +211,8 @@ public:
 
   halp::setup settings;
   void prepare(halp::setup info);
+
+  void update_pitches();
 
   // This should be done in a more generic way
   using tick = halp::tick;
