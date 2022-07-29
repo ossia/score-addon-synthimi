@@ -1,17 +1,15 @@
 #pragma once
 
-#include <ossia/detail/math.hpp>
-
-#include <boost/container/static_vector.hpp>
-
 #include <DspFilters/Filter.h>
 #include <DspFilters/RBJ.h>
 #include <DspFilters/SmoothedFilter.h>
 #include <Gamma/Envelope.h>
+#include <boost/container/static_vector.hpp>
 #include <halp/audio.hpp>
 #include <halp/controls.hpp>
 #include <halp/meta.hpp>
 #include <halp/midi.hpp>
+#include <ossia/detail/math.hpp>
 #include <rnd/random.hpp>
 
 #include <memory>
@@ -136,10 +134,8 @@ struct Voice
   // let's rock
   static constexpr int maxOrder = 7;
   static constexpr auto chans = 2;
-  Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::LowPass, chans> lowpassFilter{
-      128};
-  Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::HighPass, chans> highpassFilter{
-      128};
+  Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::LowPass, chans> lowpassFilter{128};
+  Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::HighPass, chans> highpassFilter{128};
 };
 
 struct Voices
@@ -152,18 +148,22 @@ struct Voices
 class Synthimi
 {
 public:
-  halp_meta(name, "Synthimi") halp_meta(category, "Synth")
-      halp_meta(c_name, "synthimi")
-          halp_meta(uuid, "d4008ff6-73b9-4575-80a4-60e3da095db7")
+  halp_meta(name, "Synthimi")
+  halp_meta(category, "Synth")
+  halp_meta(c_name, "synthimi")
+  halp_meta(uuid, "d4008ff6-73b9-4575-80a4-60e3da095db7")
 
-              struct ins
+  struct ins
   {
     halp::midi_bus<"In"> midi;
 
     // Here we'll define our parameters - very simply, and then we'll try to refactor
     // that afterwards :-)
     halp::knob_f32<"Osc 1 Amp.", halp::range{0., 1., 1.}> osc0_amp;
-    struct : Waveform{halp_meta(name, "Osc 1 Wave")} osc0_waveform;
+    struct : Waveform
+    {
+      halp_meta(name, "Osc 1 Wave")
+    } osc0_waveform;
     struct : halp::knob_f32<"Osc 1 Pitch", halp::range{-12, 12, 0.}>
     {
       void update(Synthimi& s) { s.update_pitches(); }
@@ -174,7 +174,10 @@ public:
     } osc0_oct;
 
     halp::knob_f32<"Osc 2 Amp.", halp::range{0., 1., 1.}> osc1_amp;
-    struct : Waveform{halp_meta(name, "Osc 2 Wave")} osc1_waveform;
+    struct : Waveform
+    {
+      halp_meta(name, "Osc 2 Wave")
+    } osc1_waveform;
     struct : halp::knob_f32<"Osc 2 Pitch", halp::range{-12, 12, 0.}>
     {
       void update(Synthimi& s) { s.update_pitches(); }
@@ -185,7 +188,10 @@ public:
     } osc1_oct;
 
     halp::knob_f32<"Osc 3 Amp.", halp::range{0., 1., 1.}> osc2_amp;
-    struct : Waveform{halp_meta(name, "Osc 3 Wave")} osc2_waveform;
+    struct : Waveform
+    {
+      halp_meta(name, "Osc 3 Wave")
+    } osc2_waveform;
     struct : halp::knob_f32<"Osc 3 Pitch", halp::range{-12, 12, 0.}>
     {
       void update(Synthimi& s) { s.update_pitches(); }
@@ -196,7 +202,10 @@ public:
     } osc2_oct;
 
     halp::knob_f32<"Osc 4 Amp.", halp::range{0., 1., 1.}> osc3_amp;
-    struct : Waveform{halp_meta(name, "Osc 4 Wave")} osc3_waveform;
+    struct : Waveform
+    {
+      halp_meta(name, "Osc 4 Wave")
+    } osc3_waveform;
     struct : halp::knob_f32<"Osc 4 Pitch", halp::range{-12, 12, 0.}>
     {
       void update(Synthimi& s) { s.update_pitches(); }
@@ -215,8 +224,7 @@ public:
     {
       halp__enum("Filter type", LPF, LPF, HPF)
     } filt_type;
-    halp::knob_f32<"Filter cutoff", halp::range{20., 20000., 200.}>
-        filt_cutoff;
+    halp::knob_f32<"Filter cutoff", halp::range{20., 20000., 200.}> filt_cutoff;
     halp::knob_f32<"Filter reso", halp::range{0., 0., 1.}> filt_res;
     halp::knob_f32<"Filt Attack", halp::range{0., 1., 0.1}> filt_attack;
     halp::knob_f32<"Filt Decay", halp::range{0., 1., 0.1}> filt_decay;
@@ -275,9 +283,6 @@ public:
 
   std::unique_ptr<r8b::CDSPResampler> resample_l;
   std::unique_ptr<r8b::CDSPResampler> resample_r;
-
-  // Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::LowPass, 2> lowpass_l{128};
-  // Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::LowPass, 2> lowpass_r{128};
 };
 
 }

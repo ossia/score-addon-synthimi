@@ -21,11 +21,9 @@ void Synthimi::prepare(halp::setup info)
   this->settings = info;
   gam::sampleRate(upsample);
   this->resample_l = std::make_unique<r8b::CDSPResampler>(
-      upsample, info.rate, upsample_factor * info.frames,
-      3.0, 206.91, r8b::fprMinPhase);
+      upsample, info.rate, upsample_factor * info.frames, 3.0, 206.91, r8b::fprMinPhase);
   this->resample_r = std::make_unique<r8b::CDSPResampler>(
-      upsample, info.rate, upsample_factor * info.frames,
-      3.0, 206.91, r8b::fprMinPhase);
+      upsample, info.rate, upsample_factor * info.frames, 3.0, 206.91, r8b::fprMinPhase);
 }
 
 void Synthimi::update_pitches()
@@ -96,7 +94,8 @@ void Synthimi::process_midi()
           voices.back().set_freq(*this);
           if (voices.size() >= 2)
           {
-            porta_samples = 0.1 + this->inputs.portamento * upsample_factor * this->settings.rate;
+            porta_samples
+                = 0.1 + this->inputs.portamento * upsample_factor * this->settings.rate;
             if (porta_cur_samples > 0)
             {
               porta_cur_samples = 0;
@@ -223,8 +222,7 @@ void Synthimi::process_voices(int frames, double* l, double* r)
       {
         if (porta_cur_samples < porta_samples && porta_to != porta_from)
         {
-          const double porta_increment
-              = (porta_to - porta_from) / porta_samples;
+          const double porta_increment = (porta_to - porta_from) / porta_samples;
           porta_cur_samples++;
           mono.increment_pitch(*this, porta_increment);
         }
@@ -382,8 +380,7 @@ __attribute__((flatten)) double Subvoice::run(Voice& v, Synthimi& s)
       wf[0] = p.osc0_amp * wave(p.osc0_waveform, this->phase[0]);
       wf[1] = p.osc1_amp * wave(p.osc1_waveform, wf[0] + this->phase[1]);
       wf[2] = p.osc2_amp * wave(p.osc2_waveform, this->phase[2]);
-      wf[3]
-          = p.osc3_amp * wave(p.osc3_waveform, wf[1] + wf[2] + this->phase[3]);
+      wf[3] = p.osc3_amp * wave(p.osc3_waveform, wf[1] + wf[2] + this->phase[3]);
 
       x = wf[3];
 

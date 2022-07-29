@@ -1,7 +1,7 @@
 #include "score_addon_synthimi.hpp"
-#include <Synthimi/Synthimi.hpp>
 
 #include <Avnd/Factories.hpp>
+#include <Synthimi/Synthimi.hpp>
 #include <score/plugins/FactorySetup.hpp>
 #include <score_plugin_engine.hpp>
 
@@ -11,8 +11,7 @@
 score_addon_synthimi::score_addon_synthimi() = default;
 score_addon_synthimi::~score_addon_synthimi() = default;
 
-std::vector<std::unique_ptr<score::InterfaceBase>>
-score_addon_synthimi::factories(
+std::vector<std::unique_ptr<score::InterfaceBase>> score_addon_synthimi::factories(
     const score::ApplicationContext& ctx,
     const score::InterfaceKey& key) const
 {
