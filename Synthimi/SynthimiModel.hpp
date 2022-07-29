@@ -243,7 +243,7 @@ public:
           ChainSumTimes,
           ChainSumChain)
     } matrix;
-    halp::knob_i32<"Unison", halp::irange{1, 16, 1}> unison;
+    halp::knob_i32<"Unison", halp::irange{0, 16, 0}> unison;
   } inputs;
 
   struct
@@ -273,8 +273,8 @@ public:
   double porta_from = -1;
   double porta_to = -1;
 
-  std::unique_ptr<r8b::CDSPResampler24> resample_l;
-  std::unique_ptr<r8b::CDSPResampler24> resample_r;
+  std::unique_ptr<r8b::CDSPResampler> resample_l;
+  std::unique_ptr<r8b::CDSPResampler> resample_r;
 
   // Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::LowPass, 2> lowpass_l{128};
   // Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::LowPass, 2> lowpass_r{128};

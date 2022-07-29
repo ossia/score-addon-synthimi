@@ -20,10 +20,12 @@ void Synthimi::prepare(halp::setup info)
   double upsample = upsample_factor * info.rate;
   this->settings = info;
   gam::sampleRate(upsample);
-  this->resample_l = std::make_unique<r8b::CDSPResampler24>(
-      upsample, info.rate, upsample_factor * info.frames);
-  this->resample_r = std::make_unique<r8b::CDSPResampler24>(
-      upsample, info.rate, upsample_factor * info.frames);
+  this->resample_l = std::make_unique<r8b::CDSPResampler>(
+      upsample, info.rate, upsample_factor * info.frames,
+      3.0, 206.91, r8b::fprMinPhase);
+  this->resample_r = std::make_unique<r8b::CDSPResampler>(
+      upsample, info.rate, upsample_factor * info.frames,
+      3.0, 206.91, r8b::fprMinPhase);
 }
 
 void Synthimi::update_pitches()
@@ -32,6 +34,7 @@ void Synthimi::update_pitches()
   {
     v.set_freq(*this);
   }
+  mono.set_freq(*this);
 }
 
 void Synthimi::operator()(halp::tick t)
@@ -93,9 +96,7 @@ void Synthimi::process_midi()
           voices.back().set_freq(*this);
           if (voices.size() >= 2)
           {
-            porta_samples = 1.
-                            + this->inputs.portamento * upsample_factor
-                                  * this->settings.rate;
+            porta_samples = 0.1 + this->inputs.portamento * upsample_factor * this->settings.rate;
             if (porta_cur_samples > 0)
             {
               porta_cur_samples = 0;
