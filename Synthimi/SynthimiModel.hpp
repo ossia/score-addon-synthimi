@@ -149,7 +149,11 @@ class Synthimi
 {
 public:
   halp_meta(name, "Synthimi")
-  halp_meta(category, "Synth")
+  halp_meta(category, "Audio/Synth")
+  halp_meta(author, "Jean-Michaël Celerier")
+  halp_meta(
+      description,
+      "A basic synthesizer. Modeled after the meows of the developer's cat, Shashimi.")
   halp_meta(c_name, "synthimi")
   halp_meta(uuid, "d4008ff6-73b9-4575-80a4-60e3da095db7")
 
