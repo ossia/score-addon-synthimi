@@ -224,7 +224,7 @@ public:
     {
       halp__enum("Filter type", LPF, LPF, HPF)
     } filt_type;
-    halp::knob_f32<"Filter cutoff", halp::range{20., 20000., 200.}> filt_cutoff;
+    halp::knob_f32<"Filter cutoff", halp::range{20., 20000., 2000.}> filt_cutoff;
     halp::knob_f32<"Filter reso", halp::range{0., 0., 1.}> filt_res;
     halp::knob_f32<"Filt Attack", halp::range{0., 1., 0.1}> filt_attack;
     halp::knob_f32<"Filt Decay", halp::range{0., 1., 0.1}> filt_decay;

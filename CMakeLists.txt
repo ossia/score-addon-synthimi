@@ -22,12 +22,7 @@ setup_score_plugin(score_addon_synthimi)
 target_link_libraries(score_addon_synthimi
   PRIVATE
     score_plugin_engine score_plugin_avnd
-    /home/jcelerier/projets/oss/media_objects/DSPFilters/libfilters.so
+    "$<BUILD_INTERFACE:gamma>"
+    "$<BUILD_INTERFACE:dspfilters>"
     "$<BUILD_INTERFACE:kfr>"
 )
-target_include_directories(score_addon_synthimi
-  PRIVATE
-    /home/jcelerier/projets/oss/media_objects/Gamma
-    /home/jcelerier/projets/oss/media_objects/DSPFilters/DSPFilters/include
-)
-# let's do a dirty ehe

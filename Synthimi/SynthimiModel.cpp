@@ -3,7 +3,6 @@
 #include <kfr/dsp/oscillators.hpp>
 #include <libremidi/message.hpp>
 
-#include <Gamma/../src/Domain.cpp>
 #include <r8brain-free-src/r8bbase.cpp>
 
 // This is a bit slow to build and I want to go fast tonight... so maybe...
@@ -14,7 +13,7 @@
 
 namespace Synthimi
 {
-constexpr int upsample_factor = 4;
+constexpr int upsample_factor = 3;
 void Synthimi::prepare(halp::setup info)
 {
   double upsample = upsample_factor * info.rate;
@@ -297,7 +296,8 @@ static double wave(Waveform::enum_type t, double ph) noexcept
       return 2. * double(std::rand()) / RAND_MAX - 1.;
   }
 }
-__attribute__((flatten)) void Voice::set_freq(Synthimi& synth)
+
+HALP_INLINE_FLATTEN void Voice::set_freq(Synthimi& synth)
 {
   main.set_freq(synth);
   for (auto& sub : unison)
@@ -318,7 +318,8 @@ void Voice::update_envelope(Synthimi& synth)
   filt_adsr.sustain(synth.inputs.filt_sustain);
   filt_adsr.release(synth.inputs.filt_release);
 }
-__attribute__((flatten)) double Subvoice::run(Voice& v, Synthimi& s)
+
+HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
 {
   auto& p = s.inputs;
 
@@ -404,7 +405,8 @@ __attribute__((flatten)) double Subvoice::run(Voice& v, Synthimi& s)
     this->phase[3] -= ossia::two_pi;
   return x;
 }
-__attribute__((flatten)) void Subvoice::set_freq(Synthimi& s)
+
+HALP_INLINE_FLATTEN void Subvoice::set_freq(Synthimi& s)
 {
   const auto& p = s.inputs;
   const double rf = ossia::two_pi / double(upsample_factor * s.settings.rate);
