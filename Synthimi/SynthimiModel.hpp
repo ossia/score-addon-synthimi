@@ -7,6 +7,7 @@
 #include <Gamma/Envelope.h>
 #include <boost/container/static_vector.hpp>
 #include <halp/audio.hpp>
+#include <halp/compat/gamma.hpp>
 #include <halp/controls.hpp>
 #include <halp/meta.hpp>
 #include <halp/midi.hpp>
@@ -75,11 +76,10 @@ struct Subvoice
 };
 struct Voice
 {
-
   Voice() noexcept = default;
-  Voice(const Voice&) noexcept = default;
+  Voice(const Voice&) noexcept = delete;
   Voice(Voice&&) noexcept = default;
-  Voice& operator=(const Voice&) noexcept = default;
+  Voice& operator=(const Voice&) noexcept = delete;
   Voice& operator=(Voice&&) noexcept = default;
   explicit Voice(double pitch, double ampl) noexcept
   {
@@ -117,6 +117,12 @@ struct Voice
     set_freq(synth);
   }
 
+  void init(double rate)
+  {
+    amp_adsr.set_sample_rate(rate);
+    filt_adsr.set_sample_rate(rate);
+  }
+
   void set_freq(Synthimi& synth);
   void update_envelope(Synthimi& synth);
   Frame run(Synthimi& synth);
@@ -127,8 +133,8 @@ struct Voice
   Subvoice main;
   Subvoice unison[16];
 
-  gam::ADSR<double, double> amp_adsr;
-  gam::ADSR<double, double> filt_adsr;
+  gam::ADSR<double, double, halp::compat::gamma_domain> amp_adsr;
+  gam::ADSR<double, double, halp::compat::gamma_domain> filt_adsr;
 
   // let's rock
   static constexpr int maxOrder = 7;

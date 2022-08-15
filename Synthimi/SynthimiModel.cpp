@@ -15,7 +15,7 @@ void Synthimi::prepare(halp::setup info)
 {
   double upsample = upsample_factor * info.rate;
   this->settings = info;
-  gam::sampleRate(upsample);
+  this->mono.init(upsample);
   this->resample_l = std::make_unique<r8b::CDSPResampler>(
       upsample, info.rate, upsample_factor * info.frames, 3.0, 206.91, r8b::fprMinPhase);
   this->resample_r = std::make_unique<r8b::CDSPResampler>(
@@ -87,6 +87,7 @@ void Synthimi::process_midi()
         if (auto ampl = m.bytes[2] / 127.; ampl > 0)
         {
           voices.emplace_back(note, ampl);
+          voices.back().init(settings.rate * upsample_factor);
           voices.back().set_freq(*this);
           if (voices.size() >= 2)
           {
@@ -109,7 +110,7 @@ void Synthimi::process_midi()
             porta_from = voices.back().main.pitch;
             porta_to = voices.back().main.pitch;
             const bool had_released = mono.amp_adsr.released();
-            mono = voices.back();
+            mono = std::move(voices.back());
             if (!had_released)
             {
               mono.amp_adsr.resetSoft();
