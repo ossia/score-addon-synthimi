@@ -1,5 +1,6 @@
 #pragma once
 
+#include <CDSPResampler.h>
 #include <DspFilters/Filter.h>
 #include <DspFilters/RBJ.h>
 #include <DspFilters/SmoothedFilter.h>
@@ -13,8 +14,6 @@
 #include <rnd/random.hpp>
 
 #include <memory>
-
-#include <r8brain-free-src/CDSPResampler.h>
 
 namespace Synthimi
 {
