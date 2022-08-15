@@ -21,6 +21,7 @@ namespace Synthimi
 // Let's define a generic port for the waveform chooser
 struct Waveform
 {
+  halp_meta(columns, 5)
   enum enum_type
   {
     Sine,
@@ -38,7 +39,18 @@ struct Waveform
 
   struct range
   {
-    std::string_view values[5]{"Sine", "Square", "Tri", "Sawtooth", "Noise"};
+    std::string_view values[5]{"Sine", "Square", "Tri", "Saw", "Noise"};
+    std::string_view pixmaps[10]{
+        ":/icons/wave_sin_off.png",
+        ":/icons/wave_sin_on.png",
+        ":/icons/wave_square_off.png",
+        ":/icons/wave_square_on.png",
+        ":/icons/wave_triangle_off.png",
+        ":/icons/wave_triangle_on.png",
+        ":/icons/wave_saw_off.png",
+        ":/icons/wave_saw_on.png",
+        ":/icons/wave_noise1_off.png",
+        ":/icons/wave_noise1_on.png"};
     enum_type init = Sine;
   };
 
@@ -162,6 +174,8 @@ public:
   halp_meta(c_name, "synthimi")
   halp_meta(uuid, "d4008ff6-73b9-4575-80a4-60e3da095db7")
 
+  struct ui;
+
   struct ins
   {
     halp::midi_bus<"In"> midi;
@@ -224,41 +238,34 @@ public:
       void update(Synthimi& s) { s.update_pitches(); }
     } osc3_oct;
 
-    halp::knob_f32<"Amp Attack", halp::range{0., 1., 0.1}> amp_attack;
-    halp::knob_f32<"Amp Decay", halp::range{0., 1., 0.1}> amp_decay;
-    halp::knob_f32<"Amp Sustain", halp::range{0., 1., 0.5}> amp_sustain;
-    halp::knob_f32<"Amp Release", halp::range{0., 1., 0.2}> amp_release;
+    halp::knob_f32<"Amp. Attack", halp::range{0., 1., 0.1}> amp_attack;
+    halp::knob_f32<"Amp. Decay", halp::range{0., 1., 0.1}> amp_decay;
+    halp::knob_f32<"Amp. Sustain", halp::range{0., 1., 0.5}> amp_sustain;
+    halp::knob_f32<"Amp. Release", halp::range{0., 1., 0.2}> amp_release;
 
     struct
     {
-      halp__enum("Filter type", LPF, LPF, HPF)
+      halp__enum_combobox("Type", LPF, LPF, HPF)
     } filt_type;
-    halp::knob_f32<"Filter cutoff", halp::range{20., 20000., 2000.}> filt_cutoff;
-    halp::knob_f32<"Filter reso", halp::range{0., 0., 1.}> filt_res;
-    halp::knob_f32<"Filt Attack", halp::range{0., 1., 0.1}> filt_attack;
-    halp::knob_f32<"Filt Decay", halp::range{0., 1., 0.1}> filt_decay;
-    halp::knob_f32<"Filt Sustain", halp::range{0., 1., 0.5}> filt_sustain;
-    halp::knob_f32<"Filt Release", halp::range{0., 1., 0.2}> filt_release;
+    halp::knob_f32<"Cutoff", halp::range{20., 20000., 2000.}> filt_cutoff;
+    halp::knob_f32<"Reso", halp::range{0., 0., 1.}> filt_res;
+    halp::knob_f32<"Flt. Attack", halp::range{0., 1., 0.1}> filt_attack;
+    halp::knob_f32<"Flt. Decay", halp::range{0., 1., 0.1}> filt_decay;
+    halp::knob_f32<"Flt. Sustain", halp::range{0., 1., 0.5}> filt_sustain;
+    halp::knob_f32<"Flt. Release", halp::range{0., 1., 0.2}> filt_release;
 
     struct
     {
-      halp__enum("Polyphony", Poly, Mono, Poly)
+      halp__enum_combobox("Polyphony", Poly, Mono, Poly)
     } poly_mode;
-    halp::knob_f32<"Portamento", halp::range{0., 1., 0.}> portamento;
+    halp::knob_f32<"Porta", halp::range{0., 1., 0.}> portamento;
 
-    halp::toggle<"Filter enveloppe", halp::toggle_setup{true}> filt_env;
+    halp::toggle<"Filter", halp::toggle_setup{true}> filt_env;
     halp::knob_f32<"Drive", halp::range{0., 1., 0.}> drive;
 
     struct
     {
-      halp__enum(
-          "Modulation matrix",
-          Sum,
-          Sum,
-          Chain,
-          ChainSumPlus,
-          ChainSumTimes,
-          ChainSumChain)
+      halp__enum_combobox("Modmatrix", S, S, C, CSP, CST, CSC)
     } matrix;
     halp::knob_i32<"Unison", halp::irange{0, 16, 0}> unison;
   } inputs;

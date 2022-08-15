@@ -327,7 +327,7 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
   double wf[4] = {0.};
   switch (p.matrix)
   {
-    case decltype(p.matrix)::Sum:
+    case decltype(p.matrix)::S: // Sum
     {
       wf[0] = wave(p.osc0_waveform, this->phase[0]);
       wf[1] = wave(p.osc1_waveform, this->phase[1]);
@@ -341,7 +341,7 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
 
       break;
     }
-    case decltype(p.matrix)::Chain:
+    case decltype(p.matrix)::C: // Chain
     {
       wf[0] = p.osc0_amp * wave(p.osc0_waveform, this->phase[0]);
       wf[1] = p.osc1_amp * wave(p.osc1_waveform, wf[0] + this->phase[1]);
@@ -352,7 +352,7 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
 
       break;
     }
-    case decltype(p.matrix)::ChainSumPlus:
+    case decltype(p.matrix)::CSP: // Chain Sum +
     {
       wf[0] = p.osc0_amp * wave(p.osc0_waveform, this->phase[0]);
       wf[1] = p.osc1_amp * wave(p.osc1_waveform, wf[0] + this->phase[1]);
@@ -363,7 +363,7 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
 
       break;
     }
-    case decltype(p.matrix)::ChainSumTimes:
+    case decltype(p.matrix)::CST: // Chain Sum *
     {
       wf[0] = p.osc0_amp * wave(p.osc0_waveform, this->phase[0]);
       wf[1] = p.osc1_amp * wave(p.osc1_waveform, wf[0] * this->phase[1]);
@@ -374,7 +374,7 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
 
       break;
     }
-    case decltype(p.matrix)::ChainSumChain:
+    case decltype(p.matrix)::CSC: // Chain Sum Chain
     {
       wf[0] = p.osc0_amp * wave(p.osc0_waveform, this->phase[0]);
       wf[1] = p.osc1_amp * wave(p.osc1_waveform, wf[0] + this->phase[1]);
