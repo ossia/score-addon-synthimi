@@ -25,4 +25,5 @@ target_link_libraries(score_addon_synthimi
     "$<BUILD_INTERFACE:gamma>"
     "$<BUILD_INTERFACE:dspfilters>"
     "$<BUILD_INTERFACE:kfr>"
+    "$<BUILD_INTERFACE:r8brain>"
 )

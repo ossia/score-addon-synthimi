@@ -2,9 +2,6 @@
 
 #include <kfr/dsp/oscillators.hpp>
 #include <libremidi/message.hpp>
-
-#include <r8brain-free-src/r8bbase.cpp>
-
 // This is a bit slow to build and I want to go fast tonight... so maybe...
 
 // #include <ossia/network/dataspace/gain.hpp>
