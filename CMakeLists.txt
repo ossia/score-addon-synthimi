@@ -24,6 +24,17 @@ target_link_libraries(score_addon_synthimi
     score_plugin_engine score_plugin_avnd
     "$<BUILD_INTERFACE:gamma>"
     "$<BUILD_INTERFACE:dspfilters>"
-    "$<BUILD_INTERFACE:kfr>"
     "$<BUILD_INTERFACE:r8brain>"
 )
+
+if(TARGET kfr)
+  target_link_libraries(score_addon_synthimi
+    PRIVATE
+      "$<BUILD_INTERFACE:kfr>"
+  )
+else()
+  target_include_directories(score_addon_synthimi
+    PRIVATE
+      "$<BUILD_INTERFACE:${OSSIA_3RDPARTY_FOLDER}/kfr/include>"
+  )
+endif()
