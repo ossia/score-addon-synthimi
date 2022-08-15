@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.13 FATAL_ERROR)
+project(score_addon_synthimi LANGUAGES CXX)
 
 if(NOT TARGET score_lib_base)
   include("${SCORE_SOURCE_DIR}/cmake/ScoreExternalAddon.cmake")
 endif()
 
-project(score_addon_synthimi LANGUAGES CXX)
+if(NOT TARGET score_plugin_avnd)
+  return()
+endif()
+
 
 add_library(
   score_addon_synthimi
