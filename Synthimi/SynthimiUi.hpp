@@ -12,7 +12,7 @@ struct Synthimi::ui
 
   halp_meta(name, "Main")
   halp_meta(layout, split)
-  // halp_meta(background, "synthimi/bg.svg")
+  halp_meta(background, "synthimi/bg.svg")
 
   struct
   {

@@ -10,6 +10,12 @@ if(NOT TARGET score_plugin_avnd)
 endif()
 
 
+if(Qt5Core_VERSION_STRING)
+  qt5_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
+else()
+  qt_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
+endif()
+
 add_library(
   score_addon_synthimi
   Synthimi/SynthimiModel.hpp
@@ -19,6 +25,8 @@ add_library(
 
   score_addon_synthimi.hpp
   score_addon_synthimi.cpp
+
+  ${QRCS}
 )
 
 setup_score_plugin(score_addon_synthimi)
