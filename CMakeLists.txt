@@ -3,12 +3,11 @@ project(score_addon_synthimi LANGUAGES CXX)
 
 if(NOT TARGET score_lib_base)
   include("${SCORE_SOURCE_DIR}/cmake/ScoreExternalAddon.cmake")
+else()
+  if(NOT TARGET score_plugin_avnd)
+    return()
+  endif()
 endif()
-
-if(NOT TARGET score_plugin_avnd)
-  return()
-endif()
-
 
 if(Qt5Core_VERSION_STRING)
   qt5_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
