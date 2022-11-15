@@ -15,7 +15,9 @@ std::vector<std::unique_ptr<score::InterfaceBase>> score_addon_synthimi::factori
     const score::ApplicationContext& ctx,
     const score::InterfaceKey& key) const
 {
-  return Avnd::instantiate_fx<Synthimi::Synthimi>(ctx, key);
+  std::vector<std::unique_ptr<score::InterfaceBase>> fx;
+  Avnd::instantiate_fx<Synthimi::Synthimi>(fx, ctx, key);
+  return fx;
 }
 
 std::vector<score::PluginKey> score_addon_synthimi::required() const
