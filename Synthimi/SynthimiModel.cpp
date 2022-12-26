@@ -278,7 +278,7 @@ void Synthimi::postprocess(int frames, double* l, double* r)
   std::copy_n(rptr, frames, outputs.audio.samples[1]);
 }
 
-static double wave(Waveform::enum_type t, double ph) noexcept
+static double wave(Waveform::enum_type t, const double ph) noexcept
 {
   switch (t)
   {
