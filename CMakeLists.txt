@@ -9,6 +9,10 @@ else()
   endif()
 endif()
 
+if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES armhf)
+  return()
+endif()
+
 if(Qt5Core_VERSION_STRING)
   qt5_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
 else()
