@@ -11,6 +11,80 @@
 namespace Synthimi
 {
 constexpr int upsample_factor = 3;
+/*
+struct nan_detector
+{
+  double v;
+  nan_detector() { ; }
+  nan_detector(double v) { *this = v; }
+  void check(double v)
+  {
+    SCORE_ASSERT(!std::isnan(v));
+    SCORE_ASSERT(!std::isinf(v));
+  }
+  operator double()
+  {
+    check(v);
+    return v;
+  }
+  auto& operator+=(double vv)
+  {
+    check(v);
+    check(vv);
+    v += vv;
+    return *this;
+  }
+  friend nan_detector operator+(nan_detector t, double rhs)
+  {
+    t.check(t.v);
+    t.check(rhs);
+    t.v = t.v + rhs;
+    t.check(t.v);
+    return t;
+  }
+  friend nan_detector operator-(nan_detector t, double rhs)
+  {
+    t.check(t.v);
+    t.check(rhs);
+    t.v = t.v - rhs;
+    t.check(t.v);
+    return t;
+  }
+  friend nan_detector operator*(nan_detector t, double rhs)
+  {
+    t.check(t.v);
+    t.check(rhs);
+    t.v = t.v * rhs;
+    t.check(t.v);
+    return t;
+  }
+  friend nan_detector operator*(double rhs, nan_detector t)
+  {
+    t.check(t.v);
+    t.check(rhs);
+    t.v = t.v * rhs;
+    t.check(t.v);
+    return t;
+  }
+  friend nan_detector operator/(nan_detector t, double rhs)
+  {
+    SCORE_ASSERT(rhs != 0.);
+    t.check(t.v);
+    t.check(rhs);
+    t.v = t.v / rhs;
+    t.check(t.v);
+    return t;
+  }
+  nan_detector& operator=(double vv)
+  {
+    check(vv);
+    v = vv;
+    return *this;
+  }
+};*/
+
+using nan_detector = double;
+
 void Synthimi::prepare(halp::setup info)
 {
   double upsample = upsample_factor * info.rate;
@@ -24,6 +98,9 @@ void Synthimi::prepare(halp::setup info)
 
 void Synthimi::update_pitches()
 {
+  if (this->settings.rate <= 0.)
+    return;
+
   for (auto& v : voices.active)
   {
     v.set_freq(*this);
@@ -321,10 +398,10 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
 {
   auto& p = s.inputs;
 
-  double x{};
+  nan_detector x{};
 
   // 1. Run the oscillators
-  double wf[4] = {0.};
+  nan_detector wf[4] = {0.};
   switch (p.matrix)
   {
     case decltype(p.matrix)::S: // Sum
@@ -407,7 +484,7 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
 HALP_INLINE_FLATTEN void Subvoice::set_freq(Synthimi& s)
 {
   const auto& p = s.inputs;
-  const double rf = ossia::two_pi / double(upsample_factor * s.settings.rate);
+  const nan_detector rf = ossia::two_pi / double(upsample_factor * s.settings.rate);
   this->phase_incr[0] = m2f(p.osc0_pitch + p.osc0_oct * 12. + pitch) * rf;
   this->phase_incr[1] = m2f(p.osc1_pitch + p.osc1_oct * 12. + pitch) * rf;
   this->phase_incr[2] = m2f(p.osc2_pitch + p.osc2_oct * 12. + pitch) * rf;
