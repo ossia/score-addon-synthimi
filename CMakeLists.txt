@@ -1,38 +1,21 @@
 cmake_minimum_required(VERSION 3.13 FATAL_ERROR)
-project(score_addon_synthimi LANGUAGES CXX)
 
 if(NOT TARGET score_lib_base)
-  include("${SCORE_SOURCE_DIR}/cmake/ScoreExternalAddon.cmake")
-else()
-  if(NOT TARGET score_plugin_avnd)
-    return()
-  endif()
+  include(ScoreExternalAddon)
 endif()
+
+include(ScoreAvndHelper)
 
 if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES armhf)
   return()
 endif()
 
-if(Qt5Core_VERSION_STRING)
-  qt5_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
-else()
-  qt_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
-endif()
+project(score_addon_synthimi LANGUAGES CXX)
 
-add_library(
-  score_addon_synthimi
-  Synthimi/SynthimiModel.hpp
-  Synthimi/SynthimiModel.cpp
-  Synthimi/SynthimiUi.hpp
-  Synthimi/Synthimi.hpp
-
-  score_addon_synthimi.hpp
-  score_addon_synthimi.cpp
-
-  ${QRCS}
+qt_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
+avnd_score_plugin_init(
+  BASE_TARGET score_addon_synthimi
 )
-
-setup_score_plugin(score_addon_synthimi)
 
 target_link_libraries(score_addon_synthimi
   PRIVATE
@@ -53,3 +36,26 @@ else()
       "$<BUILD_INTERFACE:${OSSIA_3RDPARTY_FOLDER}/kfr/include>"
   )
 endif()
+
+avnd_score_plugin_add(
+  BASE_TARGET score_addon_synthimi
+  SOURCES
+    Synthimi/Synthimi.hpp
+    Synthimi/SynthimiModel.hpp
+    Synthimi/SynthimiModel.cpp
+    Synthimi/SynthimiUi.hpp
+    ${QRCS}
+  TARGET synthimi
+  MAIN_CLASS Synthimi
+  NAMESPACE Synthimi
+)
+
+avnd_score_plugin_finalize(
+  BASE_TARGET score_addon_synthimi
+  PLUGIN_VERSION 1
+  PLUGIN_UUID "59d3b321-2f74-4c13-ad1c-72af76c6bb1d"
+)
+
+
+
+
