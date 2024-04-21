@@ -359,6 +359,7 @@ static double wave(Waveform::enum_type t, const double ph) noexcept
 {
   switch (t)
   {
+    default:
     case Waveform::Sine:
       return kfr::sine(ph);
     case Waveform::Square:
