@@ -10,7 +10,7 @@
 
 namespace Synthimi
 {
-constexpr int upsample_factor = 3;
+constexpr int upsample_factor = 1;
 /*
 struct nan_detector
 {
@@ -90,10 +90,20 @@ void Synthimi::prepare(halp::setup info)
   double upsample = upsample_factor * info.rate;
   this->settings = info;
   this->mono.init(upsample);
-  this->resample_l = std::make_unique<r8b::CDSPResampler>(
-      upsample, info.rate, upsample_factor * info.frames, 3.0, 206.91, r8b::fprMinPhase);
-  this->resample_r = std::make_unique<r8b::CDSPResampler>(
-      upsample, info.rate, upsample_factor * info.frames, 3.0, 206.91, r8b::fprMinPhase);
+  if constexpr (upsample_factor > 1) {
+      this->resample_l = std::make_unique<r8b::CDSPResampler>(upsample,
+                                                              info.rate,
+                                                              upsample_factor * info.frames,
+                                                              3.0,
+                                                              206.91,
+                                                              r8b::fprMinPhase);
+      this->resample_r = std::make_unique<r8b::CDSPResampler>(upsample,
+                                                              info.rate,
+                                                              upsample_factor * info.frames,
+                                                              3.0,
+                                                              206.91,
+                                                              r8b::fprMinPhase);
+  }
 }
 
 void Synthimi::update_pitches()
@@ -135,10 +145,17 @@ void Synthimi::operator()(halp::tick t)
 
   // - noise channel would be cool :)
 
+  double *l{};
+  double *r{};
   const int upsample_frames = t.frames * upsample_factor;
-  auto* l = (double*)alloca(sizeof(double) * upsample_frames);
+  if constexpr (upsample_factor > 1) {
+      l = (double *) alloca(sizeof(double) * upsample_frames);
+      r = (double *) alloca(sizeof(double) * upsample_frames);
+  } else {
+      l = outputs.audio.samples[0];
+      r = outputs.audio.samples[1];
+  }
   std::fill_n(l, upsample_frames, 0.);
-  auto* r = (double*)alloca(sizeof(double) * upsample_frames);
   std::fill_n(r, upsample_frames, 0.);
 
   process_midi();
@@ -150,120 +167,92 @@ void Synthimi::operator()(halp::tick t)
 
 void Synthimi::process_midi()
 {
-  auto& voices = this->voices.active;
-  for (auto m : this->inputs.midi.midi_messages)
-  {
-    // We get a note -> we add a voice
-    // let's use libremidi to see if we have a note
+    auto &voices = this->voices.active;
+    for (auto m : this->inputs.midi.midi_messages) {
+        // We get a note -> we add a voice
+        // let's use libremidi to see if we have a note
 
-    switch ((libremidi::message_type)(m.bytes[0] & 0xF0))
-    {
-      case libremidi::message_type::NOTE_ON:
-      {
-        auto note = m.bytes[1];
-        if (auto ampl = m.bytes[2] / 127.; ampl > 0)
-        {
-          voices.emplace_back(note, ampl);
-          voices.back().init(settings.rate * upsample_factor);
-          voices.back().set_freq(*this);
-          if (voices.size() >= 2)
-          {
-            porta_samples
-                = 0.1 + this->inputs.portamento * upsample_factor * this->settings.rate;
-            if (porta_cur_samples > 0)
-            {
-              porta_cur_samples = 0;
-            }
-            else
-            {
-              porta_from = voices[voices.size() - 2].main.pitch;
-            }
-            porta_to = voices[voices.size() - 1].main.pitch;
-          }
-          else
-          {
-            porta_samples = 0;
-            porta_cur_samples = 0;
-            porta_from = voices.back().main.pitch;
-            porta_to = voices.back().main.pitch;
-            const bool had_released = mono.amp_adsr.released();
-            mono = std::move(voices.back());
-            if (!had_released)
-            {
-              mono.amp_adsr.resetSoft();
-              mono.filt_adsr.resetSoft();
-            }
-            else
-            {
-              mono.amp_adsr.reset();
-              mono.filt_adsr.reset();
-            }
-          }
-        }
-        else
-        {
-          goto note_off; // hehe.jpg
-        }
-        // this is because some synths sadly send a note_on with vel. 0 to say note off
-        break;
-      }
-      case libremidi::message_type::NOTE_OFF:
-      {
-      note_off:
-        for (auto it = voices.rbegin(); it != voices.rend();)
-        {
-          if (it->main.pitch == m.bytes[1])
-          {
-            switch (inputs.poly_mode)
-            {
-              case decltype(inputs.poly_mode.value)::Mono:
-              {
-                if (voices.size() == 1)
-                {
-                  // The currently playing note needs release if we kill it
-                  mono.stop();
-                  voices.clear();
-                  return;
-                }
-                else
-                {
-                  it = decltype(it)(voices.erase(std::next(it).base()));
-
-                  if (voices.size() >= 2)
-                  {
-                    porta_from = voices[voices.size() - 2].main.pitch;
+        switch ((libremidi::message_type)(m.bytes[0] & 0xF0)) {
+        case libremidi::message_type::NOTE_ON: {
+            auto note = m.bytes[1];
+            if (auto ampl = m.bytes[2] / 127.; ampl > 0) {
+                voices.emplace_back(note, ampl);
+                voices.back().init(settings.rate * upsample_factor);
+                voices.back().set_freq(*this);
+                if (voices.size() >= 2) {
+                    porta_samples = 0.1
+                                    + this->inputs.portamento * upsample_factor
+                                          * this->settings.rate;
+                    if (porta_cur_samples > 0) {
+                        porta_cur_samples = 0;
+                    } else {
+                        porta_from = voices[voices.size() - 2].main.pitch;
+                    }
                     porta_to = voices[voices.size() - 1].main.pitch;
-                  }
-                  else
-                  {
+                } else {
+                    porta_samples = 0;
+                    porta_cur_samples = 0;
                     porta_from = voices.back().main.pitch;
                     porta_to = voices.back().main.pitch;
-                  }
+                    const bool had_released = mono.amp_adsr.released();
+                    mono = std::move(voices.back());
+                    if (!had_released) {
+                        mono.amp_adsr.resetSoft();
+                        mono.filt_adsr.resetSoft();
+                    } else {
+                        mono.amp_adsr.reset();
+                        mono.filt_adsr.reset();
+                    }
                 }
-                break;
-              }
-              case decltype(inputs.poly_mode.value)::Poly:
-              {
-                // We don't remove it directly, we just signal the ADSR that it gotta
-                // start the release
-                it->stop();
-                ++it;
-                break;
-              }
+            } else {
+                goto note_off; // hehe.jpg
+            }
+            // this is because some synths sadly send a note_on with vel. 0 to say note off
+            break;
+        }
+        case libremidi::message_type::NOTE_OFF: {
+        note_off:
+            for (auto it = voices.rbegin(); it != voices.rend();) {
+                if (it->main.pitch == m.bytes[1]) {
+                    switch (inputs.poly_mode) {
+                    case decltype(inputs.poly_mode.value)::Mono: {
+                        if (voices.size() == 1) {
+                            // The currently playing note needs release if we kill it
+                            mono.stop();
+                            voices.clear();
+                            return;
+                        } else {
+                            it = decltype(it)(voices.erase(std::next(it).base()));
+
+                            if (voices.size() >= 2) {
+                                porta_from = voices[voices.size() - 2].main.pitch;
+                                porta_to = voices[voices.size() - 1].main.pitch;
+                            } else {
+                                porta_from = voices.back().main.pitch;
+                                porta_to = voices.back().main.pitch;
+                            }
+                        }
+                        break;
+                    }
+                    case decltype(inputs.poly_mode.value)::Poly: {
+                        // We don't remove it directly, we just signal the ADSR that it gotta
+                        // start the release
+                        it->stop();
+                        ++it;
+                        break;
+                    }
+                    }
+                    break;
+                } else {
+                    ++it;
+                }
             }
             break;
-          }
-          else
-          {
-            ++it;
-          }
         }
-        break;
-      }
-      default:
-        break;
+        default:
+            break;
+        }
     }
-  }
 }
 
 void Synthimi::process_voices(int frames, double* l, double* r)
@@ -346,13 +335,15 @@ void Synthimi::postprocess(int frames, double* l, double* r)
     }
   }
 
-  // Resample
-  double* lptr;
-  double* rptr;
-  this->resample_l->process(l, upsample_frames, lptr);
-  this->resample_r->process(r, upsample_frames, rptr);
-  std::copy_n(lptr, frames, outputs.audio.samples[0]);
-  std::copy_n(rptr, frames, outputs.audio.samples[1]);
+  if constexpr (upsample_factor > 1) {
+      // Resample
+      double *lptr;
+      double *rptr;
+      this->resample_l->process(l, upsample_frames, lptr);
+      this->resample_r->process(r, upsample_frames, rptr);
+      std::copy_n(lptr, frames, outputs.audio.samples[0]);
+      std::copy_n(rptr, frames, outputs.audio.samples[1]);
+  }
 }
 
 static double wave(Waveform::enum_type t, const double ph) noexcept
