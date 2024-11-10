@@ -171,6 +171,7 @@ public:
   halp_meta(
       description,
       "A basic synthesizer. Modeled after the meows of the developer's cat, Shashimi.")
+  halp_meta(manual_url, "https://ossia.io/score-docs/processes/synthimi.html")
   halp_meta(c_name, "synthimi")
   halp_meta(uuid, "d4008ff6-73b9-4575-80a4-60e3da095db7")
 
