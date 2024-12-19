@@ -27,7 +27,7 @@ target_link_libraries(score_addon_synthimi
     "$<BUILD_INTERFACE:r8brain>"
 )
 
-if(TARGET kfr)
+if(OSSIA_ENABLE_KFR AND TARGET kfr)
   target_link_libraries(score_addon_synthimi
     PRIVATE
       "$<BUILD_INTERFACE:kfr>"
