@@ -5,6 +5,9 @@
 #include <DspFilters/RBJ.h>
 #include <DspFilters/SmoothedFilter.h>
 #include <Gamma/Envelope.h>
+#include <Process/CodeWriter.hpp>
+#include <Process/Dataflow/Port.hpp>
+#include <Process/Process.hpp>
 #include <boost/container/static_vector.hpp>
 #include <halp/audio.hpp>
 #include <halp/compat/gamma.hpp>
@@ -162,6 +165,70 @@ struct Voices
 
   boost::container::static_vector<Voice, 1024> active;
 };
+/*
+struct SynthimiCodeWriter : public Process::CodeWriter
+{
+  explicit SynthimiCodeWriter(const Process::ProcessModel& p) noexcept
+      : CodeWriter{p}
+  {
+  }
+
+  std::string initializer() const noexcept override
+  {
+    auto& inls = self.inlets();
+    Process::ControlInlet* osc1_amp = static_cast<Process::ControlInlet*>(inls[1]);
+    Process::ControlInlet* osc1_wf = static_cast<Process::ControlInlet*>(inls[2]);
+    Process::ControlInlet* osc1_pitch = static_cast<Process::ControlInlet*>(inls[3]);
+    Process::ControlInlet* osc1_oct = static_cast<Process::ControlInlet*>(inls[4]);
+    
+    Process::ControlInlet* osc2_amp = static_cast<Process::ControlInlet*>(inls[5]);
+    Process::ControlInlet* osc2_wf = static_cast<Process::ControlInlet*>(inls[6]);
+    Process::ControlInlet* osc2_pitch = static_cast<Process::ControlInlet*>(inls[7]);
+    Process::ControlInlet* osc2_oct = static_cast<Process::ControlInlet*>(inls[8]);
+    
+    Process::ControlInlet* osc3_amp = static_cast<Process::ControlInlet*>(inls[9]);
+    Process::ControlInlet* osc3_wf = static_cast<Process::ControlInlet*>(inls[10]);
+    Process::ControlInlet* osc3_pitch = static_cast<Process::ControlInlet*>(inls[11]);
+    Process::ControlInlet* osc3_oct = static_cast<Process::ControlInlet*>(inls[12]);
+    
+    Process::ControlInlet* osc4_amp = static_cast<Process::ControlInlet*>(inls[13]);
+    Process::ControlInlet* osc4_wf = static_cast<Process::ControlInlet*>(inls[14]);
+    Process::ControlInlet* osc4_pitch = static_cast<Process::ControlInlet*>(inls[15]);
+    Process::ControlInlet* osc4_oct = static_cast<Process::ControlInlet*>(inls[16]);
+    
+    
+    Process::ControlInlet* aenv_a = static_cast<Process::ControlInlet*>(inls[17]);
+    Process::ControlInlet* aenv_d = static_cast<Process::ControlInlet*>(inls[18]);
+    Process::ControlInlet* aenv_s = static_cast<Process::ControlInlet*>(inls[19]);
+    Process::ControlInlet* aenv_r = static_cast<Process::ControlInlet*>(inls[20]);
+    
+    Process::ControlInlet* fenv_type = static_cast<Process::ControlInlet*>(inls[21]);
+    
+    Process::ControlInlet* fenv_cutoff = static_cast<Process::ControlInlet*>(inls[22]);
+    Process::ControlInlet* fenv_reso = static_cast<Process::ControlInlet*>(inls[23]);
+    
+    Process::ControlInlet* fenv_a = static_cast<Process::ControlInlet*>(inls[24]);
+    Process::ControlInlet* fenv_d = static_cast<Process::ControlInlet*>(inls[25]);
+    Process::ControlInlet* fenv_s = static_cast<Process::ControlInlet*>(inls[26]);
+    Process::ControlInlet* fenv_r = static_cast<Process::ControlInlet*>(inls[27]);
+    
+    return fmt::format(R"_(.inputs = {{
+  .osc1_amp = {},
+  .osc2_amp = {},
+  .osc3_amp = {},
+  .osc4_amp = {},
+}})_");
+    
+
+  }
+  std::string typeName() const noexcept override;
+  std::string accessInlet(const Id<Process::Port>& id) const noexcept override;
+  std::string accessOutlet(const Id<Process::Port>& id) const noexcept override;
+  std::string execute() const noexcept override;
+
+  bool in_vector{}, ret_vector{};
+};
+*/
 class Synthimi
 {
 public:
@@ -176,6 +243,7 @@ public:
   halp_meta(uuid, "d4008ff6-73b9-4575-80a4-60e3da095db7")
 
   struct ui;
+  // using code_writer = SynthimiCodeWriter;
 
   struct ins
   {
