@@ -18,7 +18,7 @@ struct Synthimi::ui
   {
     halp_meta(name, "Oscillators")
     halp_meta(layout, halp::layouts::group)
-    // halp_meta(background, halp::colors::light)
+    // halp_meta(background, halp::colors::background_light)
     struct
     {
       halp_meta(layout, halp::layouts::tabs)
