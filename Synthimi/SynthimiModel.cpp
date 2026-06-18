@@ -2,6 +2,8 @@
 
 #include <kfr/dsp/oscillators.hpp>
 #include <libremidi/message.hpp>
+
+#include <numbers>
 // This is a bit slow to build and I want to go fast tonight... so maybe...
 
 // #include <ossia/network/dataspace/gain.hpp>
@@ -11,6 +13,7 @@
 namespace Synthimi
 {
 constexpr int upsample_factor = 1;
+constexpr double two_pi = 2. * std::numbers::pi_v<double>;
 /*
 struct nan_detector
 {
@@ -462,21 +465,21 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
   this->phase[2] += this->phase_incr[2];
   this->phase[3] += this->phase_incr[3];
 
-  if (this->phase[0] > ossia::two_pi)
-    this->phase[0] -= ossia::two_pi;
-  if (this->phase[1] > ossia::two_pi)
-    this->phase[1] -= ossia::two_pi;
-  if (this->phase[2] > ossia::two_pi)
-    this->phase[2] -= ossia::two_pi;
-  if (this->phase[3] > ossia::two_pi)
-    this->phase[3] -= ossia::two_pi;
+  if (this->phase[0] > two_pi)
+    this->phase[0] -= two_pi;
+  if (this->phase[1] > two_pi)
+    this->phase[1] -= two_pi;
+  if (this->phase[2] > two_pi)
+    this->phase[2] -= two_pi;
+  if (this->phase[3] > two_pi)
+    this->phase[3] -= two_pi;
   return x;
 }
 
 HALP_INLINE_FLATTEN void Subvoice::set_freq(Synthimi& s)
 {
   const auto& p = s.inputs;
-  const nan_detector rf = ossia::two_pi / double(upsample_factor * s.settings.rate);
+  const nan_detector rf = two_pi / double(upsample_factor * s.settings.rate);
   this->phase_incr[0] = m2f(p.osc0_pitch + p.osc0_oct * 12. + pitch) * rf;
   this->phase_incr[1] = m2f(p.osc1_pitch + p.osc1_oct * 12. + pitch) * rf;
   this->phase_incr[2] = m2f(p.osc2_pitch + p.osc2_oct * 12. + pitch) * rf;
