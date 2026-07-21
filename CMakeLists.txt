@@ -1,63 +1,58 @@
 cmake_minimum_required(VERSION 3.24 FATAL_ERROR)
 
+project(score_addon_synthimi LANGUAGES CXX)
+
+# Max/MSP externals link the static CRT (/MT) on Windows, as the official
+# max-sdk-base requires. Set it for the whole addon -- before Avendish and the
+# object library are created -- so every target shares one runtime; mixing /MT
+# and /MD trips MSVC with LNK2038. (CMP0091 is NEW via cmake_minimum_required.)
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES armhf)
   return()
 endif()
 
-if(NOT TARGET score_lib_base)
-  include(ScoreExternalAddon)
+# Use the Avendish the host (ossia score) provides; otherwise fetch it.
+find_package(Avendish QUIET)
+if(NOT Avendish_FOUND)
+  include(FetchContent)
+  FetchContent_Declare(
+    Avendish
+    GIT_REPOSITORY "https://github.com/celtera/avendish"
+    GIT_TAG 7eafe173)
+  FetchContent_Populate(Avendish)
+  list(APPEND CMAKE_PREFIX_PATH "${avendish_SOURCE_DIR}")
+  find_package(Avendish REQUIRED)
 endif()
-
-if(NOT TARGET score_plugin_avnd)
-  return()
-endif()
-
-project(score_addon_synthimi LANGUAGES CXX)
 
 qt_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
-avnd_score_plugin_init(
-  BASE_TARGET score_addon_synthimi
-)
 
-target_link_libraries(score_addon_synthimi
-  PRIVATE
-    score_plugin_engine score_plugin_avnd
+# Audio dependencies, linked so they reach the score base target / every back-end.
+add_library(synthimi_deps INTERFACE)
+target_link_libraries(synthimi_deps
+  INTERFACE
     "$<BUILD_INTERFACE:gamma>"
     "$<BUILD_INTERFACE:dspfilters>"
-    "$<BUILD_INTERFACE:r8brain>"
-)
-
+    "$<BUILD_INTERFACE:r8brain>")
 if(OSSIA_ENABLE_KFR AND TARGET kfr)
-  target_link_libraries(score_addon_synthimi
-    PRIVATE
-      "$<BUILD_INTERFACE:kfr>"
-  )
+  target_link_libraries(synthimi_deps INTERFACE "$<BUILD_INTERFACE:kfr>")
 else()
-  target_include_directories(score_addon_synthimi
-    PRIVATE
-      "$<BUILD_INTERFACE:${OSSIA_3RDPARTY_FOLDER}/kfr/include>"
-  )
+  target_include_directories(synthimi_deps
+    INTERFACE "$<BUILD_INTERFACE:${OSSIA_3RDPARTY_FOLDER}/kfr/include>")
 endif()
 
-avnd_score_plugin_add(
-  BASE_TARGET score_addon_synthimi
+avnd_addon_init(NAME score_addon_synthimi)
+
+avnd_addon_object(
+  BASE score_addon_synthimi C_NAME synthimi CLASS Synthimi NAMESPACE Synthimi
+  DEPENDENCIES synthimi_deps
   SOURCES
     Synthimi/Synthimi.hpp
     Synthimi/SynthimiModel.hpp
     Synthimi/SynthimiModel.cpp
     Synthimi/SynthimiUi.hpp
-    ${QRCS}
-  TARGET synthimi
-  MAIN_CLASS Synthimi
-  NAMESPACE Synthimi
-)
+    ${QRCS})
 
-avnd_score_plugin_finalize(
-  BASE_TARGET score_addon_synthimi
-  PLUGIN_VERSION 1
-  PLUGIN_UUID "59d3b321-2f74-4c13-ad1c-72af76c6bb1d"
-)
-
-
-
-
+avnd_addon_finalize(NAME score_addon_synthimi UUID 59d3b321-2f74-4c13-ad1c-72af76c6bb1d VERSION 1)
