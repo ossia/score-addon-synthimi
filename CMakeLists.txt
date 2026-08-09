@@ -50,6 +50,27 @@ avnd_score_plugin_add(
   TARGET synthimi
   MAIN_CLASS Synthimi
   NAMESPACE Synthimi
+  OPTIMIZED
+)
+
+avnd_score_plugin_add(
+  BASE_TARGET score_addon_synthimi
+  SOURCES
+    Fomo/Fomo.hpp
+  TARGET fomo
+  MAIN_CLASS Fomo
+  NAMESPACE Synthimi
+  OPTIMIZED
+)
+
+avnd_score_plugin_add(
+  BASE_TARGET score_addon_synthimi
+  SOURCES
+    Kaboom/Kaboom.hpp
+  TARGET kaboom
+  MAIN_CLASS Kaboom
+  NAMESPACE kbm
+  OPTIMIZED
 )
 
 avnd_score_plugin_finalize(
@@ -57,7 +78,3 @@ avnd_score_plugin_finalize(
   PLUGIN_VERSION 1
   PLUGIN_UUID "59d3b321-2f74-4c13-ad1c-72af76c6bb1d"
 )
-
-
-
-

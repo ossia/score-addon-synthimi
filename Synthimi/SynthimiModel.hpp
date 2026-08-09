@@ -148,12 +148,26 @@ struct Voice
   gam::ADSR<double, double, halp::compat::gamma_domain> amp_adsr;
   gam::ADSR<double, double, halp::compat::gamma_domain> filt_adsr;
 
+  // Last filter design handed to the biquads, so Voice::run can skip the
+  // redesign while the envelope is sitting still. -1 forces the first pass.
+  double last_cutf = -1.;
+  double last_q = -1.;
+  int last_filt_type = -1;
+
   // let's rock
   static constexpr int maxOrder = 7;
   static constexpr auto chans = 2;
   Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::LowPass, chans> lowpassFilter{128};
   Dsp::SmoothedFilterDesign<Dsp::RBJ::Design::HighPass, chans> highpassFilter{128};
 };
+
+// Ceiling on simultaneously sounding voices. The container below is a
+// static_vector, so exceeding its capacity throws from the audio thread; and
+// voices only ever leave through amp_adsr.done(), which never happens for a
+// voice whose note-off went missing. 32 is well past what the CPU profile
+// likes anyway -- 32 saw voices with unison 8 already cost ~21% of a core at a
+// 64-frame block -- so the cap protects the callback as much as the container.
+inline constexpr std::size_t max_voices = 32;
 
 struct Voices
 {
@@ -249,7 +263,10 @@ public:
       halp__enum_combobox("Type", LPF, LPF, HPF)
     } filt_type;
     halp::knob_f32<"Cutoff", halp::range{20., 20000., 2000.}> filt_cutoff;
-    halp::knob_f32<"Reso", halp::range{0., 0., 1.}> filt_res;
+    // This is the RBJ Q, handed straight to Dsp::Params[2]. The range read
+    // {0., 0., 1.} -- min == max == 0 with an init of 1 -- so the knob could
+    // only ever be dragged to a value that divides by zero in the biquad setup.
+    halp::knob_f32<"Reso", halp::range{0.1, 10., 1.}> filt_res;
     halp::knob_f32<"Flt. Attack", halp::range{0., 1., 0.1}> filt_attack;
     halp::knob_f32<"Flt. Decay", halp::range{0., 1., 0.1}> filt_decay;
     halp::knob_f32<"Flt. Sustain", halp::range{0., 1., 0.5}> filt_sustain;
