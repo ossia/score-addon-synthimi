@@ -63,6 +63,15 @@ avnd_score_plugin_add(
   OPTIMIZED
 )
 
+# Kaboom's port count is large enough that instantiating it through the
+# boost.pfr fallback exhausts the compiler: g++-14 peaks at 40 GB and is
+# OOM-killed, and -fsyntax-only alone reaches 10 GB, so no optimisation flag
+# helps. GCC only leaves that fallback with P1061 packs: g++ >= 16, as C++26.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+   AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+        OR NOT CXX_VERSION_FLAG STREQUAL "cxx_std_26"))
+  message(STATUS "score-addon-synthimi: skipping kaboom, it needs g++ >= 16 in C++26 mode")
+else()
 avnd_score_plugin_add(
   BASE_TARGET score_addon_synthimi
   SOURCES
@@ -72,6 +81,7 @@ avnd_score_plugin_add(
   NAMESPACE kbm
   OPTIMIZED
 )
+endif()
 
 # At the default inline threshold clang spends ~3h30 in the WebAssembly backend
 # lowering this one object; 40 is the highest value that still compiles it in
