@@ -73,6 +73,15 @@ avnd_score_plugin_add(
   OPTIMIZED
 )
 
+# At the default inline threshold clang spends ~3h30 in the WebAssembly backend
+# lowering this one object; 40 is the highest value that still compiles it in
+# under two minutes. Set on the generated TU alone so no other object changes,
+# and -fno-lto so the inliner actually runs here rather than at link time.
+if("${CMAKE_CXX_COMPILER_ID}" MATCHES ".*Clang")
+  set_property(SOURCE "${CMAKE_BINARY_DIR}/kaboom_avnd.cpp" APPEND PROPERTY
+    COMPILE_OPTIONS -fno-lto -mllvm -inline-threshold=40)
+endif()
+
 avnd_score_plugin_finalize(
   BASE_TARGET score_addon_synthimi
   PLUGIN_VERSION 1
