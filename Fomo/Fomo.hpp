@@ -1550,8 +1550,9 @@ struct VoiceGroup
 
 struct Fomo
 {
-  static consteval auto name() { return "Matrix FM (4-Op)"; }
-  static consteval auto c_name() { return "matrix_fm_4op"; }
+  static consteval auto name() { return "FoMo"; }
+  static consteval auto category() { return "Audio/Synth"; }
+  static consteval auto c_name() { return "fomo"; }
   static consteval auto uuid() { return "e9f0a1b2-3c4d-5e6f-7a8b-9c0d1e2f3a4b"; }
 
   struct ins

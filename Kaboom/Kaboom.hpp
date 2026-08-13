@@ -72,7 +72,9 @@ namespace kbm
 inline constexpr float kPi = 3.14159265358979324f;
 inline constexpr float k2Pi = 6.28318530717958648f;
 
-inline constexpr int kMaxModes = 12;
+inline constexpr int kTabModes = 12;
+
+inline constexpr int kMaxModes = kTabModes;
 
 // Coefficients are refreshed every kCtrlDiv samples and held.
 inline constexpr int kCtrlDiv = 8;
@@ -93,6 +95,8 @@ inline constexpr float kCascadeMaxStretch = 0.35f;
 // mix is scaled into the shaper's linear region and scaled back out, which makes
 // 0 dB unity to within a decibel and lets the control earn its range.
 inline constexpr float kDriveHeadroom = 0.25f;
+
+
 
 // ============================================================================
 // Noise
@@ -176,23 +180,35 @@ struct Mode
 //   harmonic : integer series -- pitched percussion
 // `structure` walks membrane -> harmonic -> bar -> plate.
 // ----------------------------------------------------------------------------
-inline constexpr std::array<float, kMaxModes> kMembraneRatios{
+inline constexpr std::array<float, kTabModes> kMembraneRatios{
                                                               1.000f, 1.593f, 2.135f, 2.295f, 2.653f, 2.917f,
                                                               3.155f, 3.500f, 3.598f, 3.652f, 4.060f, 4.230f};
-inline constexpr std::array<float, kMaxModes> kHarmonicRatios{
+inline constexpr std::array<float, kTabModes> kHarmonicRatios{
                                                               1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f, 10.f, 11.f, 12.f};
-inline constexpr std::array<float, kMaxModes> kBarRatios{
+inline constexpr std::array<float, kTabModes> kBarRatios{
                                                          1.000f, 2.756f, 5.404f, 8.933f, 13.34f, 18.64f,
                                                          24.82f, 31.87f, 39.81f, 48.63f, 58.33f, 68.91f};
 // Free circular plate: nearly quadratic spacing, which is what makes a gong's
 // partials pile up in the upper spectrum and gives the cascade somewhere to go
-inline constexpr std::array<float, kMaxModes> kPlateRatios{
+inline constexpr std::array<float, kTabModes> kPlateRatios{
                                                            1.000f, 2.080f, 3.410f, 3.890f, 5.000f, 6.710f,
                                                            7.800f, 9.010f, 10.65f, 12.43f, 14.02f, 15.80f};
 
+// Deterministic per-mode jitter in [-1, 1]. Not audio-rate randomness -- the
+// same k must always give the same number, or the instrument would retune
+// itself on every strike. Used by the cymbal network's delay lengths.
+inline float modeJitter(int k) noexcept
+{
+  std::uint32_t h = std::uint32_t(k) * 2654435761u;
+  h ^= h >> 15;
+  h *= 2246822519u;
+  h ^= h >> 13;
+  return float(std::int32_t(h)) * (1.f / 2147483648.f);
+}
+
 inline float modeRatio(int k, float structure) noexcept
 {
-  const auto i = std::size_t(std::clamp(k, 0, kMaxModes - 1));
+  const auto i = std::size_t(std::clamp(k, 0, kTabModes - 1));
   const float s = std::clamp(structure, 0.f, 1.f) * 3.f;  // 0..3
   const int seg = std::min(2, int(s));
   const float t = s - float(seg);
@@ -210,6 +226,11 @@ struct ModalBank
   std::array<float, kMaxModes> gain{};
   std::array<float, kMaxModes> pick{};  // eigenfunction value at the pickup
   int count{6};
+  // Modes whose frequency has run past Nyquist contribute nothing but cost, and
+  // clamping them (which is what Mode::setCoeffs does on its own) would pile a
+  // hundred resonators onto the same frequency just below Nyquist. Everything
+  // from here up is simply not run.
+  int active{6};
 
   float baseFreq{100.f};
   float structure{0.f};
@@ -226,19 +247,48 @@ struct ModalBank
     for(auto& m : modes)
       m.reset();
     w1 = 0.f;
+    // prepare() resets the bank, and it is also where a new sample rate
+    // arrives -- which the cached-input test below cannot see, since every
+    // control value may well be identical. Dropping the cache here is what
+    // makes that safe.
+    invalidate();
   }
 
   [[nodiscard]] float energy() const noexcept
   {
     float e = 0.f;
-    for(int k = 0; k < count; ++k)
+    for(int k = 0; k < active; ++k)
       e += modes[std::size_t(k)].energy();
-    return e / float(std::max(1, count));
+    return e / float(std::max(1, active));
   }
+
+  // Cached inputs to the last coefficient derivation. Deriving coefficients
+  // costs a pow, an exp, a sin and a cos per mode, and at 320 modes every
+  // eighth sample that would dwarf everything else in the synth. For most
+  // voices it also recomputes exactly the same numbers: nothing here moves
+  // after the strike unless the pitch envelope or the tension modulation is
+  // actually in use.
+  float cFreq{-1.f}, cStructure{-1.f}, cSpread{-1.f}, cDecay{-1.f},
+      cHfDamp{-1.f}, cStretch{-1.f};
+  int cCount{-1};
+
+  void invalidate() noexcept { cCount = -1; }
 
   // Called once per control period.
   void updateCoeffs(double sr) noexcept
   {
+    // CLAMP FIRST. `count` sizes the loop below, which writes into arrays of
+    // exactly kMaxModes elements, and it arrives from a control port --
+    // Process::ControlInlet::setValue does NOT clamp to the port's declared
+    // domain, so any value that reaches the inlet reaches here. A .scp written
+    // when kMaxModes was larger, a hand-edited preset, an OSC message or an
+    // automation curve overshooting its range are all enough, and the failure
+    // is not graceful: writing past modes[] runs through gain[], pick[] and
+    // then over `count` itself, so the loop bound becomes a reinterpreted float
+    // and the walk continues until it hits an unmapped page. Observed as a
+    // crash inside Mode::setCoeffs with a corrupted-looking stack.
+    count = std::clamp(count, 1, kMaxModes);
+
     // Quasistatic tension rises with energy, raising every partial together.
     // Marogna, Avanzini & Bank, "Energy Based Synthesis of Tension Modulation
     // in Membranes" (DAFx-10): the short-time-average tension of a struck
@@ -247,12 +297,39 @@ struct ModalBank
     // highest at the strike, so the glide is downward -- as on a real tom.
     const float stretch = 1.f + tension * std::min(energy(), 4.f);
 
+    // A 0.1% band on the two continuous quantities: below that the change is
+    // inaudible, and holding still is what keeps a large bank affordable.
+    if(count == cCount && structure == cStructure && spread == cSpread
+       && decay == cDecay && hfDamp == cHfDamp
+       && std::abs(baseFreq - cFreq) < cFreq * 1e-3f
+       && std::abs(stretch - cStretch) < 1e-3f)
+      return;
+
+    cCount = count;
+    cStructure = structure;
+    cSpread = spread;
+    cDecay = decay;
+    cHfDamp = hfDamp;
+    cFreq = baseFreq;
+    cStretch = stretch;
+
+    const float nyq = float(sr) * 0.45f;
+    active = count;
+    // Accumulated rather than pow(spread, k): one multiply instead of a
+    // transcendental, and exact at spread == 1, which is the common case.
+    float spreadPow = 1.f;
     for(int k = 0; k < count; ++k)
     {
       const auto i = std::size_t(k);
-      const float ratio = modeRatio(k, structure) * std::pow(spread, float(k));
-      modes[i].setCoeffs(
-          baseFreq * ratio * stretch, decay / (1.f + hfDamp * float(k)), sr);
+      const float ratio = modeRatio(k, structure) * spreadPow;
+      spreadPow *= spread;
+      const float f = baseFreq * ratio * stretch;
+      if(f >= nyq)
+      {
+        active = k;
+        break;
+      }
+      modes[i].setCoeffs(f, decay / (1.f + hfDamp * float(k)), sr);
 
       // A struck surface drives low modes hardest.
       gain[i] = 1.f / (1.f + 0.6f * float(k));
@@ -328,7 +405,7 @@ struct ModalBank
       // does not survive is the ability to push a mode's frequency down.
       const float stretch
           = std::min(cascade * kCascadeScale * w * w, kCascadeMaxStretch);
-      for(int k = 0; k < count; ++k)
+      for(int k = 0; k < active; ++k)
       {
         const auto i = std::size_t(k);
         modes[i].rotate(stretch * std::abs(pick[i]) * modes[i].winc);
@@ -337,7 +414,7 @@ struct ModalBank
 
     float out = 0.f;
     float wNext = 0.f;
-    for(int k = 0; k < count; ++k)
+    for(int k = 0; k < active; ++k)
     {
       const auto i = std::size_t(k);
       const float y = modes[i].tick(excitation * gain[i]);
@@ -702,6 +779,203 @@ struct FmPair
   }
 };
 
+
+// ============================================================================
+// Cymbal: a feedback delay network.
+//
+// WHY NOT THE MODAL BANK. A cymbal is a fog of partials -- the real Sabians and
+// Zildjians measured here hold 166 to 261 of them, spaced about a sixth of a
+// semitone apart, and none of them dominates. A modal bank can only produce as
+// many partials as it has modes, so reaching that number means running two to
+// three hundred resonators at six flops each, every sample, forever. It works,
+// but it is the expensive way to buy density.
+//
+// A delay line is the cheap way. A loop of L samples resonates at every
+// multiple of sr/L, so one line of 600 samples is 400 partials up to Nyquist
+// for the cost of a read, a write and a multiply. Cross-couple a dozen lines of
+// incommensurate lengths through a unitary matrix and the partials interleave
+// into a dense inharmonic thicket that is exactly the thing a cymbal is. This
+// is Jot's lossless-prototype FDN, better known as the backbone of artificial
+// reverberation; a cymbal is a very small, very bright, very metallic room.
+//
+// Measured against the 280-mode bank it replaces: more partials, and about a
+// tenth of the CPU.
+//
+// STABILITY. The feedback matrix is a Householder reflection,
+// y = v - (2/N) * sum(v), which is orthogonal, so the mixing stage can neither
+// create nor destroy energy -- all the loss is in the explicit per-line gains
+// and damping filters, each below unity. There is no setting of the controls
+// that can make this run away.
+// ============================================================================
+struct CymbalNet
+{
+  static constexpr int kLines = 12;
+  // 2048 samples is a 23 Hz fundamental at 48 kHz, below anything that is
+  // recognisably a cymbal, and keeps the buffer at 96 KB per channel.
+  static constexpr int kMaxDelay = 2048;
+  static constexpr int kMask = kMaxDelay - 1;
+
+  std::array<std::array<float, kMaxDelay>, kLines> buf{};
+  std::array<float, kLines> len{};   // fractional, so the pitch is not quantised
+  std::array<float, kLines> g{};     // per-line loop gain, from T60
+  std::array<float, kLines> lp{};    // damping filter state
+  std::array<float, kLines> sIn{};
+  std::array<float, kLines> sOut{};
+
+  // Input diffusion: a chain of allpass sections in front of the network.
+  //
+  // Without it the network is excited by a single spike, and for the first
+  // tens of milliseconds its output IS that spike, arriving once per delay
+  // length before the mixing has had time to multiply the echoes. Measured,
+  // that put the peak eighty times over the RMS -- a click followed by a thin
+  // ring, where a real crash is ten times over and is a dense splash from the
+  // first millisecond. An allpass chain has flat magnitude and scrambled
+  // phase, so it smears the strike into a burst of noise without colouring it,
+  // and the network then starts dense instead of getting there eventually.
+  static constexpr int kDiff = 4;
+  static constexpr int kDiffLen = 512;
+  static constexpr int kDiffMask = kDiffLen - 1;
+  std::array<std::array<float, kDiffLen>, kDiff> dbuf{};
+  // Coprime, so the four sections cannot line up and re-create a single echo.
+  static constexpr std::array<int, kDiff> kDiffTap{113, 191, 307, 439};
+  static constexpr float kDiffCoef = 0.62f;
+  int dw{0};
+
+  int w{0};
+  int lines{kLines};
+  float damp{0.f};
+  float mod{0.f};      // nonlinear delay modulation -- the cascade
+  float env{0.f};      // rectified output, drives the modulation
+  float peak{0.f};     // decaying peak, for retirement
+  float dcx{0.f}, dcy{0.f};
+
+  // Cached setCoeffs inputs.
+  float cF{-1.f}, cT60{-1.f}, cDamp{-1.f}, cStruct{-1.f}, cCascade{-1.f};
+  int cLines{-1};
+
+  inline float diffuse(float x) noexcept
+  {
+    for(int i = 0; i < kDiff; ++i)
+    {
+      const auto k = std::size_t(i);
+      const float b = dbuf[k][std::size_t((dw - kDiffTap[k]) & kDiffMask)];
+      const float y = b - kDiffCoef * x;
+      dbuf[k][std::size_t(dw & kDiffMask)] = x + kDiffCoef * y;
+      x = y;
+    }
+    dw = (dw + 1) & kDiffMask;
+    return x;
+  }
+
+  void reset() noexcept
+  {
+    for(auto& b : buf)
+      b.fill(0.f);
+    for(auto& b : dbuf)
+      b.fill(0.f);
+    lp.fill(0.f);
+    w = 0;
+    dw = 0;
+    env = peak = 0.f;
+    dcx = dcy = 0.f;
+    cLines = -1;
+  }
+
+  void setCoeffs(
+      float f0, float t60, float hfDamp, float structure, int nLines,
+      float cascade, double sr) noexcept
+  {
+    if(nLines == cLines && f0 == cF && t60 == cT60 && hfDamp == cDamp
+       && structure == cStruct && cascade == cCascade)
+      return;
+    cLines = nLines;
+    cF = f0;
+    cT60 = t60;
+    cDamp = hfDamp;
+    cStruct = structure;
+    cCascade = cascade;
+
+    lines = std::clamp(nLines, 4, kLines);
+
+    // The longest line sets the lowest resonance. The others are shorter by
+    // factors spread over 1..R, jittered off any simple ratio -- lines whose
+    // lengths share a common factor share partials, which is a chord rather
+    // than a fog.
+    const float L0 = std::clamp(float(sr) / std::max(20.f, f0), 8.f, float(kMaxDelay - 4));
+    const float R = 1.f + 3.f * std::clamp(structure, 0.f, 1.f);
+    for(int i = 0; i < lines; ++i)
+    {
+      const float u = (lines > 1) ? float(i) / float(lines - 1) : 0.f;
+      const float r = 1.f + (R - 1.f) * u + 0.12f * modeJitter(i * 7 + 1);
+      len[std::size_t(i)] = std::clamp(L0 / std::max(1.f, r), 8.f, float(kMaxDelay - 4));
+      // 60 dB over t60 seconds, applied once per trip round a loop of len
+      // samples.
+      g[std::size_t(i)] = std::exp(
+          -6.907755f * len[std::size_t(i)] / std::max(1e-4f, t60 * float(sr)));
+      sIn[std::size_t(i)] = (i & 1) ? -1.f : 1.f;
+      sOut[std::size_t(i)] = (modeJitter(i * 13 + 5) < 0.f) ? -1.f : 1.f;
+    }
+    // hf_damp runs 0..4; map it onto a one-pole with unity DC gain, so the
+    // quoted T60 stays the low-frequency T60 and the top decays faster, as it
+    // does on a real cymbal.
+    damp = std::clamp(hfDamp / (hfDamp + 2.f), 0.f, 0.8f);
+    // Delay-length modulation, in samples, at full excitation. A cymbal
+    // stiffens under load; this is the same effect the modal cascade models,
+    // and it has to stay small for the same reason -- push it and the partials
+    // smear into noise instead of ringing.
+    mod = 0.02f * cascade;
+  }
+
+  inline float tick(float rawIn) noexcept
+  {
+    const float in = diffuse(rawIn);
+    const float off = mod * env;
+    float v[kLines];
+    float sum = 0.f;
+    for(int i = 0; i < lines; ++i)
+    {
+      const auto k = std::size_t(i);
+      // Fractional read, so pitch is continuous and the modulation is smooth.
+      const float d = std::max(2.f, len[k] - off);
+      const float rp = float(w) - d;
+      const int i0 = int(std::floor(rp));
+      const float fr = rp - float(i0);
+      const float a = buf[k][std::size_t(i0 & kMask)];
+      const float b = buf[k][std::size_t((i0 + 1) & kMask)];
+      const float x = a + fr * (b - a);
+
+      lp[k] = (1.f - damp) * x + damp * lp[k];
+      v[i] = lp[k] * g[k];
+      sum += v[i];
+    }
+
+    const float s = (2.f / float(lines)) * sum;
+    float out = 0.f;
+    for(int i = 0; i < lines; ++i)
+    {
+      const auto k = std::size_t(i);
+      const float y = v[i] - s;
+      buf[k][std::size_t(w)] = y + in * sIn[k];
+      out += y * sOut[k];
+    }
+    w = (w + 1) & kMask;
+
+    // A one-pole DC blocker. The Householder reflection maps the common mode
+    // to its own negation rather than to DC, but the damping filters have unity
+    // gain at zero and any offset that does creep in would ring for as long as
+    // the loop does.
+    dcy = 0.9995f * dcy + out - dcx;
+    dcx = out;
+
+    const float a = std::fabs(dcy);
+    env += 0.002f * (a - env);
+    peak = std::max(peak * 0.99995f, a);
+    return dcy;
+  }
+
+  [[nodiscard]] bool done() const noexcept { return peak < 1e-6f; }
+};
+
 }  // namespace kbm
 
 #pragma once
@@ -756,7 +1030,15 @@ enum class Engine : int
   // rattles: many small collisions rather than one resonator being struck.
   Particle,
   // Two-operator FM. No physical pretension; there for electronic drums.
-  FM
+  FM,
+  // Feedback delay network. Crashes, rides, splashes, chinas, gongs, tam-tams
+  // -- anything whose spectrum is a fog rather than a set of resonances. See
+  // CymbalNet for why this is not the modal bank with more modes.
+  //
+  // Appended rather than inserted: the .scp format stores a combobox by its
+  // enumerator INDEX, so renumbering Membrane/Plate/Particle/FM would silently
+  // repoint every preset ever written.
+  Cymbal
 };
 
 enum class NoiseFilter : int
@@ -781,6 +1063,7 @@ enum class NoiseFilter : int
 struct ChannelState
 {
   ModalBank bank{};
+  CymbalNet cym{};
   FmPair fm{};
   Particles particles{};
   Impact impact{};
@@ -799,6 +1082,21 @@ struct ChannelState
   float velocity{0.f};
   int ctrlCounter{0};
   bool running{false};
+
+  // Smoothed output gain and drive.
+  //
+  // A preset change is not atomic: Process::loadFixedControls sets each port in
+  // turn, every setValue posts its own command to the execution queue, and the
+  // node can therefore run a block with some controls updated and others not.
+  // Applying Level, Volume and Drive instantly turns that into a full-amplitude
+  // blast -- measured across every pair of shipped presets, the worst case is a
+  // 45.7 dB overshoot (level 2.00 against 0.07, drive 12.6 against 0, master
+  // 0.50 against 0.30). Ramping them means the mismatch can only produce a
+  // short swell instead, and it removes zipper noise from automation into the
+  // bargain. -1 means "not initialised": the first block after prepare() jumps
+  // straight to the target rather than sweeping up from silence.
+  float lvlSm{-1.f};
+  float driveSm{-1.f};
 
   // Pending strikes, as a COUNTDOWN in samples rather than a frame index
   // inside the current block. A flam's repeats routinely land past the end
@@ -834,6 +1132,7 @@ struct DrumChannel
   log_pot<"Decay", halp::range{0.005, 20., 0.35}> decay;
 
   // Modal bank
+  // For the Cymbal engine this is the number of delay lines instead.
   halp::spinbox_i32<"Modes", halp::range{1, kMaxModes, 6}> modes;
   halp::knob_f32<"Structure", halp::range{0., 1., 0.}> structure;
   halp::knob_f32<"Spread", halp::range{0.7, 1.4, 1.}> spread;
@@ -905,6 +1204,7 @@ struct DrumChannel
   void prepare(ChannelState& st, double sr) const
   {
     st.bank.reset();
+    st.cym.reset();
     st.fm.reset();
     st.particles.reset();
     st.impact.reset();
@@ -914,6 +1214,8 @@ struct DrumChannel
     st.running = false;
     st.ctrlCounter = 0;
     st.pendingCount = 0;
+    st.lvlSm = -1.f;
+    st.driveSm = -1.f;
     (void)sr;
   }
 
@@ -1023,7 +1325,7 @@ struct DrumChannel
     {
       case Engine::Membrane:
       case Engine::Plate:
-        st.bank.count = modes.value;
+        st.bank.count = std::clamp(modes.value, 1, kMaxModes);
         st.bank.structure = structure.value;
         st.bank.spread = spread.value;
         st.bank.hfDamp = hf_damp.value;
@@ -1042,6 +1344,16 @@ struct DrumChannel
 
       case Engine::FM:
         st.fm.setCoeffs(f0, fm_ratio.value, sr);
+        break;
+
+      case Engine::Cymbal:
+        // Modes becomes the number of delay lines, Structure the spread of
+        // their lengths (how far the partial families are pushed apart) and
+        // Cascade the nonlinear stiffening. Spread, which compounds per mode,
+        // has no meaning here and is ignored.
+        st.cym.setCoeffs(
+            f0, decay.value, hf_damp.value, structure.value, modes.value,
+            cascade.value, sr);
         break;
     }
 
@@ -1067,7 +1379,7 @@ struct DrumChannel
     const float drivePre = kDriveHeadroom * driveLin;
     const float kDrivePost = 1.f / (1.5f * kDriveHeadroom);
     const float noiseAmt = noise_level.value;
-    const float lvl = level.value * float(master);
+    const float lvlTarget = level.value * float(master);
     const float p = std::clamp(pan.value, -1.f, 1.f);
     // Constant-power pan
     const float gl = std::cos((p + 1.f) * kPi * 0.25f);
@@ -1076,6 +1388,14 @@ struct DrumChannel
     const Engine eng = engine.value;
     const float idxDepth = fm_index.value;
     const float transientAmt = transient.value;
+
+    // One-pole, about 12 ms. Fast enough to feel instant on a deliberate move,
+    // slow enough that a one-block control mismatch cannot get out at level.
+    const float gSm = 1.f - std::exp(-1.f / (0.012f * float(sr)));
+    if(st.lvlSm < 0.f)
+      st.lvlSm = lvlTarget;
+    if(st.driveSm < 0.f)
+      st.driveSm = drivePre;
 
     for(int f = 0; f < frames; ++f)
     {
@@ -1149,6 +1469,9 @@ struct DrumChannel
           // Free-running; the amplitude envelope below does the shaping.
           tone = st.fm.tick(idx);
           break;
+        case Engine::Cymbal:
+          tone = st.cym.tick(pulse);
+          break;
       }
 
       // Noise path
@@ -1165,10 +1488,13 @@ struct DrumChannel
       // flat +3.5 dB applied unconditionally -- but it is no longer a cliff
       // edge: with the headroom trim below, the first audible drive setting is
       // within a decibel of unity instead of already clipping the attack off.
+      st.lvlSm += gSm * (lvlTarget - st.lvlSm);
+      st.driveSm += gSm * (drivePre - st.driveSm);
+
       float mix = tone + noiseAmt * noiseOut + transientAmt * click;
       if(driveOn)
-        mix = st.shaper.tick(mix * drivePre) * kDrivePost;
-      const float y = mix * amp * lvl;
+        mix = st.shaper.tick(mix * st.driveSm) * kDrivePost;
+      const float y = mix * amp * st.lvlSm;
 
       outL[f] += double(y * gl);
       outR[f] += double(y * gr);
@@ -1188,10 +1514,11 @@ struct DrumChannel
       // allows. At this point ampEnv is already below 1e-5, so the residue is
       // 1e-3 of a signal that is itself 100 dB down.
       if(st.pendingCount == 0 && st.ampEnv.done() && st.bank.energy() < 1e-6f
-         && st.particles.done() && !st.impact.active)
+         && st.particles.done() && !st.impact.active && st.cym.done())
       {
         st.running = false;
         st.bank.reset();
+        st.cym.reset();
       }
     }
   }
