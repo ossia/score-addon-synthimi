@@ -1138,15 +1138,27 @@ struct PitchEnv
 // ============================================================================
 struct VoiceGroup
 {
+  // kfr::vec has a user-provided no-op default constructor over a raw SIMD
+  // union, so std::array<vec4, N>{} does NOT zero the lanes -- it leaves them
+  // indeterminate. Any NaN/Inf bit pattern in a never-played lane then rides
+  // the horizontal sum into the output and sticks there. Every vec4 member
+  // must be zeroed explicitly.
+  static std::array<vec4, NumOps> zeroedLanes() noexcept
+  {
+    std::array<vec4, NumOps> a;
+    a.fill(vec4(0.f));
+    return a;
+  }
+
   // SIMD state: one lane per voice
-  std::array<vec4, NumOps> phase{};     // unmodulated carrier phase, [0, 1)
-  std::array<vec4, NumOps> inc{};       // base increment, before pitch mod
-  std::array<vec4, NumOps> env{};
-  std::array<vec4, NumOps> z1{};        // operator output at t-1
-  std::array<vec4, NumOps> z2{};        // operator output at t-2
-  std::array<vec4, NumOps> prevMod{};   // modulation offset at t-1
-  std::array<vec4, NumOps> prevWrap{};  // wrapped modulated phase at t-1
-  std::array<vec4, NumOps> opGain{};    // velocity depth * key level scaling
+  std::array<vec4, NumOps> phase = zeroedLanes();     // unmodulated carrier phase, [0, 1)
+  std::array<vec4, NumOps> inc = zeroedLanes();       // base increment, before pitch mod
+  std::array<vec4, NumOps> env = zeroedLanes();
+  std::array<vec4, NumOps> z1 = zeroedLanes();        // operator output at t-1
+  std::array<vec4, NumOps> z2 = zeroedLanes();        // operator output at t-2
+  std::array<vec4, NumOps> prevMod = zeroedLanes();   // modulation offset at t-1
+  std::array<vec4, NumOps> prevWrap = zeroedLanes();  // wrapped modulated phase at t-1
+  std::array<vec4, NumOps> opGain = zeroedLanes();    // velocity depth * key level scaling
 
   // Scalar per-lane state
   std::array<std::array<env_t, NumOps>, Lanes> envelopes{};
@@ -1395,7 +1407,10 @@ struct VoiceGroup
 
       // --- 3. Evaluate the operator graph in topological order, so a
       // feedforward modulator's *current* sample reaches its destination.
-      std::array<vec4, NumOps> cur{};
+      // Zeroed for real (vec4{} would not be): every op is written exactly
+      // once below, but a zero fallback is the sane value if the routing
+      // ever lets a read through first.
+      std::array<vec4, NumOps> cur = zeroedLanes();
       vec4 acc(0.f);
 
       for(int step = 0; step < NumOps; ++step)
