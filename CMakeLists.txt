@@ -39,6 +39,22 @@ else()
   )
 endif()
 
+# Kabang's sampler pitch-shifts through RubberBand; the target PUBLICly
+# exports the include dir that satisfies Sampler.hpp's __has_include chain
+# (without it the include silently vanishes and RubberBand:: fails to
+# resolve on every platform).
+if(TARGET rubberband)
+  target_link_libraries(score_addon_synthimi
+    PRIVATE
+      "$<BUILD_INTERFACE:rubberband>"
+  )
+else()
+  target_include_directories(score_addon_synthimi
+    PRIVATE
+      "$<BUILD_INTERFACE:${OSSIA_3RDPARTY_FOLDER}/rubberband/rubberband>"
+  )
+endif()
+
 avnd_score_plugin_add(
   BASE_TARGET score_addon_synthimi
   SOURCES
