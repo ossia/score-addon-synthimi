@@ -12,6 +12,12 @@ if(NOT TARGET score_plugin_avnd)
   return()
 endif()
 
+if(MSVC)
+  if(DEFINED ENV{GITHUB_ACTIONS})
+    # OOM in kabang
+    return()
+  endif()
+endif()
 project(score_addon_synthimi LANGUAGES CXX)
 
 qt_add_resources(QRCS "${CMAKE_CURRENT_SOURCE_DIR}/synthimi.qrc")
