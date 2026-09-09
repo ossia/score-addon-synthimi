@@ -1,5 +1,7 @@
 #include "Synthimi.hpp"
 
+#include <cstdlib>
+
 #include <kfr/dsp/oscillators.hpp>
 #include <libremidi/message.hpp>
 
