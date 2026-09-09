@@ -1,5 +1,7 @@
 #include "Sampler.hpp"
 
+#include "PitchEnvelope.hpp"
+
 namespace kbng
 {
 
@@ -105,12 +107,8 @@ void sampler::process_frame(voice& v, double& out_l, double& out_r)
   // Process pitch envelope
   if(v.pitch_envelope || v.pitch != 1.)
   {
-    if(v.pitch_track >= 0.)
-      penv *= v.pitch_track;
-    else
-      penv /= -v.pitch_track;
-    auto pitch_env = std::clamp(v.pitch + 5.0 * penv * v.pitch_track, 1. / 5., 5.);
-    v.rubberBand->setPitchScale(pitch_env);
+    v.rubberBand->setPitchScale(
+        pitch_scale(v.pitch, penv, v.pitch_envelope, v.pitch_track));
 
     while(v.rubberBand->available() == 0)
     {
