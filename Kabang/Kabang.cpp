@@ -62,6 +62,8 @@ voice* DrumChannel::trigger(int ts, int vel_byte)
 voice* DrumChannel::trigger(int ts, float pitch_ratio, int vel_byte)
 {
   auto v = trigger(ts, vel_byte);
+  if(!v)
+    return nullptr;
   v->pitch *= pitch_ratio;
   return v;
 }
@@ -109,7 +111,8 @@ void Minibang::operator()(halp::tick t)
     auto m = libremidi::message{{msg.bytes[0], msg.bytes[1], msg.bytes[2]}};
     if(m.get_message_type() == libremidi::message_type::NOTE_ON)
     {
-      float pitch_ratio = float(msg.bytes[1]) / this->inputs.s1.midi_key.value;
+      const int root = this->inputs.s1.midi_key.value;
+      const float pitch_ratio = root > 0 ? float(msg.bytes[1]) / root : 1.f;
       for_each_channel([&msg, pitch_ratio](DrumChannel& channel) {
         channel.trigger(msg.timestamp, pitch_ratio, msg.bytes[2]);
       });
