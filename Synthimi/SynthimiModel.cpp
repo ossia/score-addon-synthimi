@@ -174,6 +174,9 @@ void Synthimi::process_midi()
 {
     auto &voices = this->voices.active;
     for (auto m : this->inputs.midi.midi_messages) {
+        if (m.bytes.size() < 3)
+            continue;
+
         // We get a note -> we add a voice
         // let's use libremidi to see if we have a note
 

@@ -78,6 +78,9 @@ void Kabang::operator()(halp::tick t)
 {
   for(auto& msg : inputs.midi)
   {
+    if(msg.bytes.size() < 3)
+      continue;
+
     auto m = libremidi::message{{msg.bytes[0], msg.bytes[1], msg.bytes[2]}};
     if(m.get_message_type() == libremidi::message_type::NOTE_ON)
     {
@@ -108,6 +111,9 @@ void Minibang::operator()(halp::tick t)
 {
   for(auto& msg : inputs.midi)
   {
+    if(msg.bytes.size() < 3)
+      continue;
+
     auto m = libremidi::message{{msg.bytes[0], msg.bytes[1], msg.bytes[2]}};
     if(m.get_message_type() == libremidi::message_type::NOTE_ON)
     {
