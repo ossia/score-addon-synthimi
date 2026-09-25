@@ -102,6 +102,18 @@ void Kabang::operator()(halp::tick t)
       });
     }
   }
+
+  // Drums played from the UI
+  if(pending_plays != 0)
+  {
+    int i = 0;
+    for_each_channel([&](DrumChannel& channel) {
+      if(pending_plays & (1u << i++))
+        channel.trigger(0, 100);
+    });
+    pending_plays = 0;
+  }
+
   for_each_channel([&](DrumChannel& channel) {
     channel.run(t.frames, 2, outputs.audio.samples, inputs.volume);
   });

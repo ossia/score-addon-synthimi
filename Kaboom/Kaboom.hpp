@@ -998,6 +998,8 @@ struct CymbalNet
 #include <halp/controls.hpp>
 #include <halp/controls.enums.hpp>
 #include <halp/layout.hpp>
+
+#include <Kabang/PlayButton.hpp>
 #include <halp/mappers.hpp>
 #include <halp/meta.hpp>
 #include <halp/midi.hpp>
@@ -1110,6 +1112,15 @@ struct ChannelState
   std::array<float, kMaxPending> pendingVel{};
   int pendingCount{0};
 };
+
+inline constexpr halp::look small_knob{.size = halp::control_size::compact};
+inline constexpr halp::look large_knob{.size = halp::control_size::large};
+consteval halp::look small_knob_as(std::string_view name)
+{
+  auto l = halp::label_as(name);
+  l.size = halp::control_size::compact;
+  return l;
+}
 
 // ============================================================================
 struct DrumChannel
@@ -1524,73 +1535,206 @@ struct DrumChannel
   }
 
   // ---------------------------------------------------------------- ui
+  // Sections in signal order
   struct ui
   {
-    halp_meta(layout, halp::layouts::vbox)
+    halp_meta(layout, halp::layouts::hbox)
+
+    // Strip cell: play button, engine
+    struct summary
+    {
+      struct
+      {
+        halp_meta(layout, halp::layouts::hbox)
+        halp::custom_actions_item<Synthimi::PlayButton> play;
+        halp::display<&DrumChannel::engine> engine;
+      } row;
+    };
 
     struct
     {
-      halp_meta(layout, halp::layouts::hbox)
-      halp::item<&DrumChannel::engine> engine;
-      halp::item<&DrumChannel::midi_key> midi_key;
-      halp::item<&DrumChannel::level> level;
-      halp::item<&DrumChannel::pan> pan;
+      halp_meta(layout, halp::layouts::vbox)
+      struct
+      {
+        halp_meta(name, "Strike")
+        halp_meta(layout, halp::layouts::section)
+        halp_meta(background, halp::colors::background_dark)
+        struct
+        {
+          halp_meta(layout, halp::layouts::grid)
+          halp_meta(columns, 3)
+          halp::item<&DrumChannel::mallet_hard, small_knob> mallet_hard;
+          halp::item<&DrumChannel::mallet_alpha, small_knob> mallet_alpha;
+          halp::item<&DrumChannel::mallet_damp, small_knob_as("Contact")> mallet_damp;
+          halp::item<&DrumChannel::mallet_mass, small_knob> mallet_mass;
+          halp::item<&DrumChannel::strike_vel, small_knob_as("Velocity")> strike_vel;
+          halp::item<&DrumChannel::transient, small_knob_as("Transient")> transient;
+        } knobs;
+      } strike;
+
+      struct
+      {
+        halp_meta(name, "Flam")
+        halp_meta(layout, halp::layouts::section)
+        halp_meta(background, halp::colors::background_dark)
+        struct
+        {
+          halp_meta(layout, halp::layouts::hbox)
+          halp::item<&DrumChannel::flam_count, halp::label_as("Hits")> flam_count;
+          struct
+          {
+            halp_meta(layout, halp::layouts::grid)
+            halp_meta(columns, 2)
+            static constexpr auto condition()
+            {
+              return halp::enabled_when<&DrumChannel::flam_count, 2, 3, 4, 5, 6>{};
+            }
+            halp::item<&DrumChannel::flam_time, small_knob_as("Time")> flam_time;
+            halp::item<&DrumChannel::flam_skew, small_knob_as("Skew")> flam_skew;
+            halp::item<&DrumChannel::flam_decay, small_knob_as("Decay")> flam_decay;
+            halp::item<&DrumChannel::flam_rand, small_knob_as("Random")> flam_rand;
+          } repeats;
+        } row;
+      } flam;
+    } excitation;
+
+    // Named: holds a static `model`
+    struct tone_section
+    {
+      halp_meta(name, "Tone")
+      halp_meta(layout, halp::layouts::section)
+      halp_meta(background, halp::colors::background_dark)
+      struct
+      {
+        halp_meta(layout, halp::layouts::hbox)
+        halp::item<&DrumChannel::engine> engine;
+        halp::item<&DrumChannel::pitch> pitch;
+        halp::item<&DrumChannel::decay> decay;
+        halp::item<&DrumChannel::pitch_env, small_knob_as("Pitch Env")> pitch_env;
+        halp::item<&DrumChannel::pitch_decay, small_knob_as("Env Decay")> pitch_decay;
+      } main;
+
+      // Per-engine controls. Cymbal: Modes is its delay line count, ignores Spread
+      // and Tension. Named: holds a static `model`.
+      struct engine_pages
+      {
+        halp_meta(layout, halp::layouts::tabs)
+        halp_flag(hide_tabs);
+        static constexpr auto model = &DrumChannel::engine;
+
+        struct
+        {
+          halp_meta(name, "Resonator")
+          halp_meta(layout, halp::layouts::hbox)
+          static constexpr auto when()
+          {
+            return std::array{Engine::Membrane, Engine::Plate, Engine::Cymbal};
+          }
+          halp::item<&DrumChannel::modes> modes;
+          halp::item<&DrumChannel::structure, small_knob> structure;
+          struct
+          {
+            halp_meta(layout, halp::layouts::hbox)
+            static constexpr auto condition()
+            {
+              return halp::enabled_when<
+                  &DrumChannel::engine, Engine::Membrane, Engine::Plate>{};
+            }
+            halp::item<&DrumChannel::spread, small_knob> spread;
+            halp::item<&DrumChannel::tension, small_knob> tension;
+          } membrane;
+          halp::item<&DrumChannel::hf_damp, small_knob> hf_damp;
+          struct
+          {
+            halp_meta(layout, halp::layouts::container)
+            static constexpr auto condition()
+            {
+              return halp::enabled_when<
+                  &DrumChannel::engine, Engine::Plate, Engine::Cymbal>{};
+            }
+            halp::item<&DrumChannel::cascade, small_knob> cascade;
+          } cascade;
+        } resonator;
+
+        struct
+        {
+          halp_meta(name, "Particle")
+          halp_meta(layout, halp::layouts::hbox)
+          static constexpr auto when() { return std::array{Engine::Particle}; }
+          halp::item<&DrumChannel::grain_count, small_knob> grain_count;
+          halp::item<&DrumChannel::shake_decay, small_knob> shake_decay;
+        } particle;
+
+        struct
+        {
+          halp_meta(name, "FM")
+          halp_meta(layout, halp::layouts::hbox)
+          static constexpr auto when() { return std::array{Engine::FM}; }
+          halp::item<&DrumChannel::fm_ratio, small_knob_as("FM Ratio")> fm_ratio;
+          halp::item<&DrumChannel::fm_index, small_knob_as("FM Index")> fm_index;
+          halp::item<&DrumChannel::fm_index_decay, small_knob_as("Index Decay")>
+              fm_index_decay;
+        } fm;
+      } engine_controls;
+    } tone;
+
+    struct
+    {
+      halp_meta(layout, halp::layouts::vbox)
+      struct
+      {
+        halp_meta(name, "Noise")
+        halp_meta(layout, halp::layouts::section)
+        halp_meta(background, halp::colors::background_dark)
+        // Table: the filter selector only widens its column
+        struct
+        {
+          halp_meta(layout, halp::layouts::table)
+          struct
+          {
+            halp_meta(layout, halp::layouts::hbox)
+            halp::item<&DrumChannel::noise_filter, halp::label_as("Filter")>
+                noise_filter;
+            halp::item<&DrumChannel::noise_cutoff, small_knob_as("Cutoff")> noise_cutoff;
+            halp::item<&DrumChannel::noise_res, small_knob_as("Reso")> noise_res;
+          } filter;
+          struct
+          {
+            halp_meta(layout, halp::layouts::hbox)
+            halp::item<&DrumChannel::noise_level, small_knob_as("Level")> noise_level;
+            halp::item<&DrumChannel::noise_decay, small_knob_as("Decay")> noise_decay;
+          } envelope;
+        } knobs;
+      } noise;
+
+      struct
+      {
+        halp_meta(name, "Amp")
+        halp_meta(layout, halp::layouts::section)
+        halp_meta(background, halp::colors::background_dark)
+        struct
+        {
+          halp_meta(layout, halp::layouts::grid)
+          halp_meta(columns, 3)
+          halp::item<&DrumChannel::amp_attack, small_knob> amp_attack;
+          halp::item<&DrumChannel::amp_decay, small_knob_as("Decay")> amp_decay;
+          halp::item<&DrumChannel::drive, small_knob> drive;
+          halp::item<&DrumChannel::vel_amp, small_knob> vel_amp;
+          halp::item<&DrumChannel::vel_tone, small_knob> vel_tone;
+        } knobs;
+      } amp;
+    } shaping;
+
+    struct
+    {
+      halp_meta(name, "Out")
+      halp_meta(layout, halp::layouts::section)
+      halp_meta(background, halp::colors::background_dark)
+      halp::item<&DrumChannel::level, large_knob> level;
+      halp::item<&DrumChannel::pan, small_knob> pan;
+      halp::item<&DrumChannel::midi_key, halp::label_as("Note")> midi_key;
       halp::item<&DrumChannel::choke> choke;
-    } routing;
-
-    struct
-    {
-      halp_meta(layout, halp::layouts::grid)
-      halp_meta(columns, 5)
-
-      halp::item<&DrumChannel::pitch> pitch;
-      halp::item<&DrumChannel::pitch_env> pitch_env;
-      halp::item<&DrumChannel::pitch_decay> pitch_decay;
-      halp::item<&DrumChannel::decay> decay;
-      halp::label spacer1;
-
-      halp::item<&DrumChannel::modes> modes;
-      halp::item<&DrumChannel::structure> structure;
-      halp::item<&DrumChannel::spread> spread;
-      halp::item<&DrumChannel::hf_damp> hf_damp;
-      halp::item<&DrumChannel::tension> tension;
-
-      halp::item<&DrumChannel::cascade> cascade;
-      halp::item<&DrumChannel::grain_count> grain_count;
-      halp::item<&DrumChannel::shake_decay> shake_decay;
-      halp::item<&DrumChannel::fm_ratio> fm_ratio;
-      halp::item<&DrumChannel::fm_index> fm_index;
-
-      halp::item<&DrumChannel::fm_index_decay> fm_index_decay;
-      halp::item<&DrumChannel::mallet_hard> mallet_hard;
-      halp::item<&DrumChannel::mallet_alpha> mallet_alpha;
-      halp::item<&DrumChannel::mallet_damp> mallet_damp;
-      halp::item<&DrumChannel::mallet_mass> mallet_mass;
-
-      halp::item<&DrumChannel::strike_vel> strike_vel;
-      halp::item<&DrumChannel::transient> transient;
-      halp::item<&DrumChannel::flam_count> flam_count;
-      halp::item<&DrumChannel::flam_time> flam_time;
-      halp::item<&DrumChannel::flam_skew> flam_skew;
-
-      halp::item<&DrumChannel::flam_decay> flam_decay;
-      halp::item<&DrumChannel::flam_rand> flam_rand;
-      halp::label spacer2;
-      halp::label spacer3;
-      halp::label spacer4;
-
-      halp::item<&DrumChannel::noise_level> noise_level;
-      halp::item<&DrumChannel::noise_filter> noise_filter;
-      halp::item<&DrumChannel::noise_cutoff> noise_cutoff;
-      halp::item<&DrumChannel::noise_res> noise_res;
-      halp::item<&DrumChannel::noise_decay> noise_decay;
-
-      halp::item<&DrumChannel::drive> drive;
-      halp::item<&DrumChannel::amp_attack> amp_attack;
-      halp::item<&DrumChannel::amp_decay> amp_decay;
-      halp::item<&DrumChannel::vel_amp> vel_amp;
-      halp::item<&DrumChannel::vel_tone> vel_tone;
-    } controls;
+    } out;
   };
 };
 
@@ -1648,6 +1792,19 @@ public:
 
   double sr{44100.};
 
+  struct play_drum
+  {
+    int index{};
+  };
+  // Bit i: play drum i on the next tick
+  unsigned pending_plays{};
+
+  void process_message(const play_drum& msg)
+  {
+    if(msg.index >= 0 && msg.index < kChannels)
+      pending_plays |= 1u << msg.index;
+  }
+
   void prepare(halp::setup s)
   {
     sr = (s.rate > 0.) ? s.rate : 44100.;
@@ -1699,6 +1856,26 @@ public:
       }
     }
 
+    // Drums played from the UI, choking their group like a note
+    if(pending_plays != 0)
+    {
+      int i = 0;
+      for_each_channel([&](const DrumChannel& played, ChannelState& st) {
+        if(pending_plays & (1u << i++))
+        {
+          played.schedule(st, 0, 0.8f, sr);
+          if(played.choke.value != 0)
+          {
+            for_each_channel([&](const DrumChannel& c, ChannelState& other) {
+              if(&c != &played && c.choke.value == played.choke.value)
+                c.chokeNow(other, sr);
+            });
+          }
+        }
+      });
+      pending_plays = 0;
+    }
+
     double* outL = outputs.audio.samples[0];
     double* outR = outputs.audio.samples[1];
     for(int f = 0; f < frames; ++f)
@@ -1716,54 +1893,84 @@ public:
   struct ui
   {
     halp_meta(name, "Main")
-    halp_meta(layout, halp::layouts::hbox)
-    halp_meta(background, halp::colors::background_mid)
+    halp_meta(layout, halp::layouts::vbox)
+    halp_meta(background, halp::colors::background_dark)
 
     struct
     {
-      halp_meta(name, "Tabs")
-      halp_meta(layout, halp::layouts::tabs)
-      halp_meta(background, halp::colors::background_darker)
+      halp_meta(name, "Drums")
+      halp_meta(layout, halp::layouts::strip_detail)
+      halp_meta(background, halp::colors::background_mid)
 
       struct : halp::recursive_group_item<&ins::s1, DrumChannel::ui>
       {
         halp_meta(name, "Drum 1")
+        DrumChannel::ui::summary summary;
       } s1;
       struct : halp::recursive_group_item<&ins::s2, DrumChannel::ui>
       {
         halp_meta(name, "Drum 2")
+        DrumChannel::ui::summary summary;
       } s2;
       struct : halp::recursive_group_item<&ins::s3, DrumChannel::ui>
       {
         halp_meta(name, "Drum 3")
+        DrumChannel::ui::summary summary;
       } s3;
       struct : halp::recursive_group_item<&ins::s4, DrumChannel::ui>
       {
         halp_meta(name, "Drum 4")
+        DrumChannel::ui::summary summary;
       } s4;
       struct : halp::recursive_group_item<&ins::s5, DrumChannel::ui>
       {
         halp_meta(name, "Drum 5")
+        DrumChannel::ui::summary summary;
       } s5;
       struct : halp::recursive_group_item<&ins::s6, DrumChannel::ui>
       {
         halp_meta(name, "Drum 6")
+        DrumChannel::ui::summary summary;
       } s6;
       struct : halp::recursive_group_item<&ins::s7, DrumChannel::ui>
       {
         halp_meta(name, "Drum 7")
+        DrumChannel::ui::summary summary;
       } s7;
       struct : halp::recursive_group_item<&ins::s8, DrumChannel::ui>
       {
         halp_meta(name, "Drum 8")
+        DrumChannel::ui::summary summary;
       } s8;
     } drum_tabs;
 
+    struct bus
+    {
+      std::function<void(play_drum)> send_message;
+
+      void init(ui& ui)
+      {
+        int index = 0;
+        auto wire = [&](auto& page) {
+          page.summary.row.play.on_pressed
+              = [this, i = index++] { send_message(play_drum{i}); };
+        };
+        wire(ui.drum_tabs.s1);
+        wire(ui.drum_tabs.s2);
+        wire(ui.drum_tabs.s3);
+        wire(ui.drum_tabs.s4);
+        wire(ui.drum_tabs.s5);
+        wire(ui.drum_tabs.s6);
+        wire(ui.drum_tabs.s7);
+        wire(ui.drum_tabs.s8);
+      }
+    };
+
     struct
     {
-      halp_meta(name, "Global")
-      halp_meta(layout, halp::layouts::vbox)
-      halp_meta(background, halp::colors::background_darker)
+      halp_meta(name, "Master")
+      halp_meta(layout, halp::layouts::section)
+      halp_meta(background, halp::colors::background_mid)
 
       halp::item<&ins::volume> globalvol;
     } global;

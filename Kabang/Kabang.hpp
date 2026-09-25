@@ -13,6 +13,8 @@
 #include <halp/midi.hpp>
 #include <libremidi/message.hpp>
 
+#include <Kabang/PlayButton.hpp>
+
 #include <vector>
 
 namespace kbng
@@ -69,6 +71,17 @@ struct DrumChannel
   struct ui
   {
     halp_meta(layout, halp::layouts::vbox)
+
+    // Strip cell: play button, sample name as title
+    struct summary
+    {
+      struct
+      {
+        halp_meta(layout, halp::layouts::hbox)
+        halp::custom_actions_item<Synthimi::PlayButton> play;
+        halp::display<&DrumChannel::sample, halp::display_style::title> sample;
+      } row;
+    };
 
     struct
     {
@@ -159,6 +172,19 @@ public:
     f(inputs.s8);
   }
 
+  struct play_drum
+  {
+    int index{};
+  };
+  // Bit i: play drum i on the next tick
+  unsigned pending_plays{};
+
+  void process_message(const play_drum& msg)
+  {
+    if(msg.index >= 0 && msg.index < 8)
+      pending_plays |= 1u << msg.index;
+  }
+
   using tick = halp::tick;
   void operator()(halp::tick t);
 
@@ -170,45 +196,75 @@ public:
 
     struct
     {
-      halp_meta(name, "Tabs")
-      halp_meta(layout, halp::layouts::tabs)
+      halp_meta(name, "Drums")
+      halp_meta(layout, halp::layouts::strip_detail)
       halp_meta(background, halp::colors::background_darker)
 
       struct : halp::recursive_group_item<&ins::s1, DrumChannel::ui>
       {
         halp_meta(name, "Drum 1")
+        DrumChannel::ui::summary summary;
       } s1;
       struct : halp::recursive_group_item<&ins::s2, DrumChannel::ui>
       {
         halp_meta(name, "Drum 2")
+        DrumChannel::ui::summary summary;
       } s2;
       struct : halp::recursive_group_item<&ins::s3, DrumChannel::ui>
       {
         halp_meta(name, "Drum 3")
+        DrumChannel::ui::summary summary;
       } s3;
       struct : halp::recursive_group_item<&ins::s4, DrumChannel::ui>
       {
         halp_meta(name, "Drum 4")
+        DrumChannel::ui::summary summary;
       } s4;
 
       struct : halp::recursive_group_item<&ins::s5, DrumChannel::ui>
       {
         halp_meta(name, "Drum 5")
+        DrumChannel::ui::summary summary;
       } s5;
       struct : halp::recursive_group_item<&ins::s6, DrumChannel::ui>
       {
         halp_meta(name, "Drum 6")
+        DrumChannel::ui::summary summary;
       } s6;
       struct : halp::recursive_group_item<&ins::s7, DrumChannel::ui>
       {
         halp_meta(name, "Drum 7")
+        DrumChannel::ui::summary summary;
       } s7;
       struct : halp::recursive_group_item<&ins::s8, DrumChannel::ui>
       {
         halp_meta(name, "Drum 8")
+        DrumChannel::ui::summary summary;
       } s8;
 
     } drum_tabs;
+
+    struct bus
+    {
+      std::function<void(play_drum)> send_message;
+
+      void init(ui& ui)
+      {
+        int index = 0;
+        auto wire = [&](auto& page) {
+          page.summary.row.play.on_pressed
+              = [this, i = index++] { send_message(play_drum{i}); };
+        };
+        wire(ui.drum_tabs.s1);
+        wire(ui.drum_tabs.s2);
+        wire(ui.drum_tabs.s3);
+        wire(ui.drum_tabs.s4);
+        wire(ui.drum_tabs.s5);
+        wire(ui.drum_tabs.s6);
+        wire(ui.drum_tabs.s7);
+        wire(ui.drum_tabs.s8);
+      }
+    };
 
     struct
     {

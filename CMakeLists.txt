@@ -98,6 +98,7 @@ avnd_score_plugin_add(
   BASE_TARGET score_addon_synthimi
   SOURCES
     Kaboom/Kaboom.hpp
+    Kabang/PlayButton.hpp
   TARGET kaboom
   MAIN_CLASS Kaboom
   NAMESPACE kbm
@@ -129,6 +130,7 @@ avnd_score_plugin_add(
   SOURCES
     Kabang/Kabang.hpp
     Kabang/Kabang.cpp
+    Kabang/PlayButton.hpp
     Kabang/Sampler.hpp
     Kabang/Sampler.cpp
   TARGET kabang
