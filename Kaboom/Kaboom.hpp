@@ -1139,8 +1139,8 @@ struct DrumChannel
   halp::combobox_t<"Engine", Engine> engine;
   log_pot<"Pitch", halp::range{20., 4000., 60.}> pitch;
   halp::knob_f32<"P. Env", halp::range{-48., 48., 12.}> pitch_env;
-  log_pot<"P. Decay", halp::range{0.001, 1., 0.03}> pitch_decay;
-  log_pot<"Decay", halp::range{0.005, 20., 0.35}> decay;
+  halp::time_chooser<"P. Decay", halp::range{0.001, 1., 0.03}> pitch_decay;
+  halp::time_chooser<"Decay", halp::range{0.005, 20., 0.35}> decay;
 
   // Modal bank
   // For the Cymbal engine this is the number of delay lines instead.
@@ -1155,12 +1155,12 @@ struct DrumChannel
 
   // Particle engine
   halp::knob_f32<"Grains", halp::range{1., 256., 32.}> grain_count;
-  log_pot<"Shake", halp::range{0.005, 4., 0.2}> shake_decay;
+  halp::time_chooser<"Shake", halp::range{0.005, 4., 0.2}> shake_decay;
 
   // FM engine
   halp::knob_f32<"FM Ratio", halp::range{0.25, 16., 1.41}> fm_ratio;
   halp::knob_f32<"FM Index", halp::range{0., 24., 6.}> fm_index;
-  log_pot<"FM I.Dec", halp::range{0.002, 2., 0.06}> fm_index_decay;
+  halp::time_chooser<"FM I.Dec", halp::range{0.002, 2., 0.06}> fm_index_decay;
 
   // -- exciter (Hunt-Crossley contact) ---------------------------------
   // Contact duration is not a control here: it emerges from the collision.
@@ -1189,7 +1189,7 @@ struct DrumChannel
   // model and the resonator state interact exactly as they would from separate
   // MIDI notes.
   halp::spinbox_i32<"Flam N", halp::range{1, 6, 1}> flam_count;
-  log_pot<"Flam Time", halp::range{0.002, 0.12, 0.018}> flam_time;
+  halp::time_chooser<"Flam Time", halp::range{0.002, 0.12, 0.018}> flam_time;
   // <1 tightens successive gaps (accelerating, like a real clap), >1 spreads
   halp::knob_f32<"Flam Skew", halp::range{0.4, 2., 0.85}> flam_skew;
   halp::knob_f32<"Flam Decay", halp::range{0., 1., 0.35}> flam_decay;
@@ -1201,12 +1201,12 @@ struct DrumChannel
   halp::combobox_t<"N. Filter", NoiseFilter> noise_filter;
   log_pot<"N. Cutoff", halp::range{40., 18000., 4000.}> noise_cutoff;
   halp::knob_f32<"N. Reso", halp::range{0.5, 20., 1.}> noise_res;
-  log_pot<"N. Decay", halp::range{0.002, 4., 0.08}> noise_decay;
+  halp::time_chooser<"N. Decay", halp::range{0.002, 4., 0.08}> noise_decay;
 
   // -- shaping ---------------------------------------------------------
   halp::knob_f32<"Drive", halp::range{0., 24., 0.}> drive;
-  log_pot<"Attack", halp::range{0.0, 0.05, 0.}> amp_attack;
-  log_pot<"A. Decay", halp::range{0.005, 8., 0.4}> amp_decay;
+  halp::time_chooser<"Attack", halp::range{0.0, 0.05, 0.}> amp_attack;
+  halp::time_chooser<"A. Decay", halp::range{0.005, 8., 0.4}> amp_decay;
   halp::knob_f32<"Vel->Amp", halp::range{0., 1., 0.7}> vel_amp;
   halp::knob_f32<"Vel->Tone", halp::range{0., 1., 0.3}> vel_tone;
 

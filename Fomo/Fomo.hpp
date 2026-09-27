@@ -1426,13 +1426,13 @@ struct VoiceGroup
   halp::hslider_f32<"Op " NUM " Detune", halp::range{-100.f, 100.f, 0.f}>      \
       detune_##IDX;                                                            \
   halp::enum_t<WaveformFM, "Op " NUM " Wave"> wave_##IDX;                        \
-  halp::hslider_f32<"Op " NUM " Attack", halp::range{0.001f, 4.f, 0.01f}>      \
+  halp::time_chooser<"Op " NUM " Attack", halp::range{0., 4., 0.01}>          \
       attack_##IDX;                                                            \
-  halp::hslider_f32<"Op " NUM " Decay", halp::range{0.001f, 8.f, 0.3f}>        \
+  halp::time_chooser<"Op " NUM " Decay", halp::range{0., 8., 0.3}>            \
       decay_##IDX;                                                             \
   halp::hslider_f32<"Op " NUM " Sustain", halp::range{0.f, 1.f, 0.7f}>         \
       sustain_##IDX;                                                           \
-  halp::hslider_f32<"Op " NUM " Release", halp::range{0.001f, 8.f, 0.4f}>      \
+  halp::time_chooser<"Op " NUM " Release", halp::range{0., 8., 0.4}>          \
       release_##IDX;                                                           \
   halp::hslider_f32<"Op " NUM " Vel Depth", halp::range{0.f, 1.f, 0.f}>        \
       vel_##IDX;                                                               \
@@ -1560,14 +1560,19 @@ struct Fomo
     SYNTHIMI_OP_PORTS(3, "4", 4.f)
 
     // Global pitch envelope
-    halp::hslider_f32<"Pitch Atk", halp::range{0.001f, 4.f, 0.02f}> peg_attack;
-    halp::hslider_f32<"Pitch Dcy", halp::range{0.001f, 4.f, 0.15f}> peg_decay;
+    halp::time_chooser<"Pitch Atk", halp::range{0., 4., 0.02}> peg_attack;
+    halp::time_chooser<"Pitch Dcy", halp::range{0., 4., 0.15}> peg_decay;
     halp::hslider_f32<"Pitch Depth", halp::range{-24.f, 24.f, 0.f}> peg_depth;
 
     // Global LFO
     halp::enum_t<LfoShape, "LFO Shape"> lfo_shape;
-    halp::hslider_f32<"LFO Rate", halp::range{0.01f, 40.f, 5.f}> lfo_rate;
-    halp::hslider_f32<"LFO Delay", halp::range{0.f, 4.f, 0.f}> lfo_delay;
+    //! One LFO cycle: seconds, or a note value.
+    struct : halp::time_chooser<"LFO Period", halp::range{0.025, 100., 0.2}>
+    {
+      //! Documents from when this was "LFO Rate" hold a frequency, in Hz.
+      static float upgrade_value(float hz) noexcept { return hz > 0.f ? 1.f / hz : 0.2f; }
+    } lfo_period;
+    halp::time_chooser<"LFO Delay", halp::range{0., 4., 0.}> lfo_delay;
     halp::hslider_f32<"LFO Pitch", halp::range{0.f, 12.f, 0.f}> lfo_pitch;
 
     halp::enum_t<AntiAlias, "Antialias"> aa_mode;
@@ -1793,7 +1798,7 @@ struct Fomo
     const float pegAtk = inputs.peg_attack.value;
     const float pegDcy = inputs.peg_decay.value;
     const float pegDepth = inputs.peg_depth.value;
-    const float lfoRate = inputs.lfo_rate.value;
+    const float lfoRate = 1.f / std::max(1e-3f, inputs.lfo_period.value);
     const float lfoDelay = inputs.lfo_delay.value;
     const float lfoPitch = inputs.lfo_pitch.value;
     const LfoShape lfoShape = inputs.lfo_shape.value;
@@ -1923,7 +1928,7 @@ struct Fomo
         {
           halp_meta(layout, hbox)
           halp::control<&ins::lfo_shape, dropdown_as("Shape")> shape;
-          halp::control<&ins::lfo_rate, small_knob_as("Rate")> rate;
+          halp::control<&ins::lfo_period, small_knob_as("Period")> rate;
           halp::control<&ins::lfo_delay, small_knob_as("Delay")> delay;
           halp::control<&ins::lfo_pitch, small_knob_as("Pitch")> pitch;
         } knobs;

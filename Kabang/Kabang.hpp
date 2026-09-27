@@ -42,24 +42,24 @@ struct DrumChannel
   halp::knob_f32<"LP Reso", halp::range{0.001, 1., 0.5}> lp_res;
 
   halp::toggle<"P. Env"> pitch_env_enable;
-  log_pot<"P. Attack", halp::range{0.0001, 1., 0.01}> pitch_attack;
-  log_pot<"P. Decay", halp::range{0.0001, 1., 0.05}> pitch_decay;
+  halp::time_chooser<"P. Attack", halp::range{0.0001, 1., 0.01}> pitch_attack;
+  halp::time_chooser<"P. Decay", halp::range{0.0001, 1., 0.05}> pitch_decay;
   halp::knob_f32<"P. Sustain", halp::range{0., 1., 1.}> pitch_sustain;
-  log_pot<"P. Release", halp::range{0.0001, 10., 0.25}> pitch_release;
+  halp::time_chooser<"P. Release", halp::range{0.0001, 10., 0.25}> pitch_release;
   halp::knob_f32<"Vel->Pitch", halp::range{-1., 1., 0.}> pitch_envelop;
 
   halp::toggle<"F. Env"> filt_env_enable;
-  log_pot<"F. Attack", halp::range{0.0001, 1., 0.01}> filt_attack;
-  log_pot<"F. Decay", halp::range{0.0001, 1., 0.05}> filt_decay;
+  halp::time_chooser<"F. Attack", halp::range{0.0001, 1., 0.01}> filt_attack;
+  halp::time_chooser<"F. Decay", halp::range{0.0001, 1., 0.05}> filt_decay;
   halp::knob_f32<"F. Sustain", halp::range{0., 1., 1.}> filt_sustain;
-  log_pot<"F. Release", halp::range{0.0001, 10., 0.25}> filt_release;
+  halp::time_chooser<"F. Release", halp::range{0.0001, 10., 0.25}> filt_release;
   halp::knob_f32<"Vel->Filt", halp::range{-1., 1., 0.}> filt_envelop;
 
   halp::toggle<"Amp. Env"> amp_env_enable;
-  log_pot<"Attack", halp::range{0.0001, 1., 0.01}> amp_attack;
-  log_pot<"Decay", halp::range{0.0001, 1., 0.05}> amp_decay;
+  halp::time_chooser<"Attack", halp::range{0.0001, 1., 0.01}> amp_attack;
+  halp::time_chooser<"Decay", halp::range{0.0001, 1., 0.05}> amp_decay;
   halp::knob_f32<"Sustain", halp::range{0., 1., 1.}> amp_sustain;
-  log_pot<"Release", halp::range{0.0001, 10., 0.25}> amp_release;
+  halp::time_chooser<"Release", halp::range{0.0001, 10., 0.25}> amp_release;
 
   halp::knob_f32<"Vel->Amp", halp::range{-1., 1., 0.}> amp_envelop;
 

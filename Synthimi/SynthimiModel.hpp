@@ -253,10 +253,10 @@ public:
       void update(Synthimi& s) { s.update_pitches(); }
     } osc3_oct;
 
-    halp::knob_f32<"Amp. Attack", halp::range{0., 1., 0.1}> amp_attack;
-    halp::knob_f32<"Amp. Decay", halp::range{0., 1., 0.1}> amp_decay;
+    halp::time_chooser<"Amp. Attack", halp::range{0., 4., 0.1}> amp_attack;
+    halp::time_chooser<"Amp. Decay", halp::range{0., 8., 0.1}> amp_decay;
     halp::knob_f32<"Amp. Sustain", halp::range{0., 1., 0.5}> amp_sustain;
-    halp::knob_f32<"Amp. Release", halp::range{0., 1., 0.2}> amp_release;
+    halp::time_chooser<"Amp. Release", halp::range{0., 8., 0.2}> amp_release;
 
     struct
     {
@@ -267,16 +267,16 @@ public:
     // {0., 0., 1.} -- min == max == 0 with an init of 1 -- so the knob could
     // only ever be dragged to a value that divides by zero in the biquad setup.
     halp::knob_f32<"Reso", halp::range{0.1, 10., 1.}> filt_res;
-    halp::knob_f32<"Flt. Attack", halp::range{0., 1., 0.1}> filt_attack;
-    halp::knob_f32<"Flt. Decay", halp::range{0., 1., 0.1}> filt_decay;
+    halp::time_chooser<"Flt. Attack", halp::range{0., 4., 0.1}> filt_attack;
+    halp::time_chooser<"Flt. Decay", halp::range{0., 8., 0.1}> filt_decay;
     halp::knob_f32<"Flt. Sustain", halp::range{0., 1., 0.5}> filt_sustain;
-    halp::knob_f32<"Flt. Release", halp::range{0., 1., 0.2}> filt_release;
+    halp::time_chooser<"Flt. Release", halp::range{0., 8., 0.2}> filt_release;
 
     struct
     {
       halp__enum_combobox("Polyphony", Poly, Mono, Poly)
     } poly_mode;
-    halp::knob_f32<"Porta", halp::range{0., 1., 0.}> portamento;
+    halp::time_chooser<"Porta", halp::range{0., 2., 0.}> portamento;
 
     halp::toggle<"Filter", halp::toggle_setup{true}> filt_env;
     halp::knob_f32<"Drive", halp::range{0., 1., 0.}> drive;

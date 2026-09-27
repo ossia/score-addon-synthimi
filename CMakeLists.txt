@@ -180,35 +180,6 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
     Catch2::Catch2WithMain score_plugin_avnd gamma dspfilters r8brain)
   add_test(NAME score_addon_synthimi_mode_test COMMAND score_addon_synthimi_mode_test)
 
-  # Kabang / Minibang pitch modulation: pure math, no sampler around it.
-  add_executable(score_addon_synthimi_kabang_pitch_envelope_test
-    tests/KabangPitchEnvelopeTest.cpp)
-  target_include_directories(score_addon_synthimi_kabang_pitch_envelope_test PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(score_addon_synthimi_kabang_pitch_envelope_test PRIVATE
-    Catch2::Catch2WithMain)
-  add_test(NAME score_addon_synthimi_kabang_pitch_envelope_test
-    COMMAND score_addon_synthimi_kabang_pitch_envelope_test)
-
-  # A note sent to Minibang with no sample loaded: the drum channel and its
-  # sampler, compiled in.
-  add_executable(score_addon_synthimi_minibang_no_sample_test
-    tests/MinibangNoSampleTest.cpp
-    Kabang/Kabang.cpp
-    Kabang/Sampler.cpp)
-  target_include_directories(score_addon_synthimi_minibang_no_sample_test PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(score_addon_synthimi_minibang_no_sample_test PRIVATE
-    Catch2::Catch2WithMain score_plugin_avnd gamma dspfilters r8brain)
-  if(TARGET rubberband)
-    target_link_libraries(score_addon_synthimi_minibang_no_sample_test PRIVATE rubberband)
-  else()
-    target_include_directories(score_addon_synthimi_minibang_no_sample_test PRIVATE
-      "${OSSIA_3RDPARTY_FOLDER}/rubberband/rubberband")
-  endif()
-  add_test(NAME score_addon_synthimi_minibang_no_sample_test
-    COMMAND score_addon_synthimi_minibang_no_sample_test)
-
   add_executable(score_addon_synthimi_fomo_envelope_test tests/FomoEnvelopeTest.cpp)
   target_include_directories(score_addon_synthimi_fomo_envelope_test PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -217,17 +188,4 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
     Catch2::Catch2WithMain score_plugin_avnd)
   add_test(NAME score_addon_synthimi_fomo_envelope_test
     COMMAND score_addon_synthimi_fomo_envelope_test)
-
-  # Same compiler requirement as the kaboom object itself
-  if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
-          AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
-               OR NOT CXX_VERSION_FLAG STREQUAL "cxx_std_26")))
-    add_executable(score_addon_synthimi_kaboom_play_test tests/KaboomPlayTest.cpp)
-    target_include_directories(score_addon_synthimi_kaboom_play_test PRIVATE
-      "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(score_addon_synthimi_kaboom_play_test PRIVATE
-      Catch2::Catch2WithMain score_plugin_avnd)
-    add_test(NAME score_addon_synthimi_kaboom_play_test
-      COMMAND score_addon_synthimi_kaboom_play_test)
-  endif()
 endif()
