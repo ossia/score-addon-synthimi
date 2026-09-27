@@ -173,6 +173,22 @@ void Synthimi::operator()(halp::tick t)
 void Synthimi::process_midi()
 {
     auto &voices = this->voices.active;
+
+    // Switching mode starts over. In Mono the voice list is the stack of held
+    // keys and only the mono voice sounds; in Poly every voice in the list
+    // sounds. Poly voices left in the list would make the next mono note
+    // legato and keep the stack from emptying (a stuck mono voice). The keys
+    // held across the switch are dropped: their note-offs find nothing.
+    if (const int mode = int(inputs.poly_mode.value); mode != last_poly_mode) {
+        if (last_poly_mode != -1) {
+            voices.clear();
+            mono.stop();
+            porta_from = -1;
+            porta_to = -1;
+            porta_cur_samples = 0;
+        }
+        last_poly_mode = mode;
+    }
     for (auto m : this->inputs.midi.midi_messages) {
         if (m.bytes.size() < 3)
             continue;
@@ -206,7 +222,12 @@ void Synthimi::process_midi()
                 voices.emplace_back(note, ampl);
                 voices.back().init(settings.rate * upsample_factor);
                 voices.back().set_freq(*this);
-                if (voices.size() >= 2) {
+                // The mono voice and the portamento are Mono's only: nothing in
+                // Poly renders or releases the mono voice, so gating it here
+                // would make a later switch to Mono play it with no key held.
+                if (inputs.poly_mode != decltype(inputs.poly_mode.value)::Mono) {
+                    // Poly: the voice list is what sounds
+                } else if (voices.size() >= 2) {
                     porta_samples = 0.1
                                     + this->inputs.portamento * upsample_factor
                                           * this->settings.rate;

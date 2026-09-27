@@ -314,6 +314,8 @@ public:
   double porta_cur_samples{};
   double porta_from = -1;
   double porta_to = -1;
+  //! Polyphony mode of the last processed tick (-1: none yet)
+  int last_poly_mode = -1;
 
   std::unique_ptr<r8b::CDSPResampler> resample_l;
   std::unique_ptr<r8b::CDSPResampler> resample_r;
