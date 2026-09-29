@@ -13,6 +13,8 @@
 #include <halp/midi.hpp>
 #include <libremidi/message.hpp>
 
+#include <Kabang/PlayButton.hpp>
+
 #include <vector>
 
 namespace kbng
@@ -40,24 +42,24 @@ struct DrumChannel
   halp::knob_f32<"LP Reso", halp::range{0.001, 1., 0.5}> lp_res;
 
   halp::toggle<"P. Env"> pitch_env_enable;
-  log_pot<"P. Attack", halp::range{0.0001, 1., 0.01}> pitch_attack;
-  log_pot<"P. Decay", halp::range{0.0001, 1., 0.05}> pitch_decay;
+  halp::time_chooser<"P. Attack", halp::range{0.0001, 1., 0.01}> pitch_attack;
+  halp::time_chooser<"P. Decay", halp::range{0.0001, 1., 0.05}> pitch_decay;
   halp::knob_f32<"P. Sustain", halp::range{0., 1., 1.}> pitch_sustain;
-  log_pot<"P. Release", halp::range{0.0001, 10., 0.25}> pitch_release;
+  halp::time_chooser<"P. Release", halp::range{0.0001, 10., 0.25}> pitch_release;
   halp::knob_f32<"Vel->Pitch", halp::range{-1., 1., 0.}> pitch_envelop;
 
   halp::toggle<"F. Env"> filt_env_enable;
-  log_pot<"F. Attack", halp::range{0.0001, 1., 0.01}> filt_attack;
-  log_pot<"F. Decay", halp::range{0.0001, 1., 0.05}> filt_decay;
+  halp::time_chooser<"F. Attack", halp::range{0.0001, 1., 0.01}> filt_attack;
+  halp::time_chooser<"F. Decay", halp::range{0.0001, 1., 0.05}> filt_decay;
   halp::knob_f32<"F. Sustain", halp::range{0., 1., 1.}> filt_sustain;
-  log_pot<"F. Release", halp::range{0.0001, 10., 0.25}> filt_release;
+  halp::time_chooser<"F. Release", halp::range{0.0001, 10., 0.25}> filt_release;
   halp::knob_f32<"Vel->Filt", halp::range{-1., 1., 0.}> filt_envelop;
 
   halp::toggle<"Amp. Env"> amp_env_enable;
-  log_pot<"Attack", halp::range{0.0001, 1., 0.01}> amp_attack;
-  log_pot<"Decay", halp::range{0.0001, 1., 0.05}> amp_decay;
+  halp::time_chooser<"Attack", halp::range{0.0001, 1., 0.01}> amp_attack;
+  halp::time_chooser<"Decay", halp::range{0.0001, 1., 0.05}> amp_decay;
   halp::knob_f32<"Sustain", halp::range{0., 1., 1.}> amp_sustain;
-  log_pot<"Release", halp::range{0.0001, 10., 0.25}> amp_release;
+  halp::time_chooser<"Release", halp::range{0.0001, 10., 0.25}> amp_release;
 
   halp::knob_f32<"Vel->Amp", halp::range{-1., 1., 0.}> amp_envelop;
 
@@ -69,6 +71,17 @@ struct DrumChannel
   struct ui
   {
     halp_meta(layout, halp::layouts::vbox)
+
+    // Strip cell: play button, sample name as title
+    struct summary
+    {
+      struct
+      {
+        halp_meta(layout, halp::layouts::hbox)
+        halp::custom_actions_item<Synthimi::PlayButton> play;
+        halp::display<&DrumChannel::sample, halp::display_style::title> sample;
+      } row;
+    };
 
     struct
     {
@@ -159,6 +172,19 @@ public:
     f(inputs.s8);
   }
 
+  struct play_drum
+  {
+    int index{};
+  };
+  // Bit i: play drum i on the next tick
+  unsigned pending_plays{};
+
+  void process_message(const play_drum& msg)
+  {
+    if(msg.index >= 0 && msg.index < 8)
+      pending_plays |= 1u << msg.index;
+  }
+
   using tick = halp::tick;
   void operator()(halp::tick t);
 
@@ -170,45 +196,75 @@ public:
 
     struct
     {
-      halp_meta(name, "Tabs")
-      halp_meta(layout, halp::layouts::tabs)
+      halp_meta(name, "Drums")
+      halp_meta(layout, halp::layouts::strip_detail)
       halp_meta(background, halp::colors::background_darker)
 
       struct : halp::recursive_group_item<&ins::s1, DrumChannel::ui>
       {
         halp_meta(name, "Drum 1")
+        DrumChannel::ui::summary summary;
       } s1;
       struct : halp::recursive_group_item<&ins::s2, DrumChannel::ui>
       {
         halp_meta(name, "Drum 2")
+        DrumChannel::ui::summary summary;
       } s2;
       struct : halp::recursive_group_item<&ins::s3, DrumChannel::ui>
       {
         halp_meta(name, "Drum 3")
+        DrumChannel::ui::summary summary;
       } s3;
       struct : halp::recursive_group_item<&ins::s4, DrumChannel::ui>
       {
         halp_meta(name, "Drum 4")
+        DrumChannel::ui::summary summary;
       } s4;
 
       struct : halp::recursive_group_item<&ins::s5, DrumChannel::ui>
       {
         halp_meta(name, "Drum 5")
+        DrumChannel::ui::summary summary;
       } s5;
       struct : halp::recursive_group_item<&ins::s6, DrumChannel::ui>
       {
         halp_meta(name, "Drum 6")
+        DrumChannel::ui::summary summary;
       } s6;
       struct : halp::recursive_group_item<&ins::s7, DrumChannel::ui>
       {
         halp_meta(name, "Drum 7")
+        DrumChannel::ui::summary summary;
       } s7;
       struct : halp::recursive_group_item<&ins::s8, DrumChannel::ui>
       {
         halp_meta(name, "Drum 8")
+        DrumChannel::ui::summary summary;
       } s8;
 
     } drum_tabs;
+
+    struct bus
+    {
+      std::function<void(play_drum)> send_message;
+
+      void init(ui& ui)
+      {
+        int index = 0;
+        auto wire = [&](auto& page) {
+          page.summary.row.play.on_pressed
+              = [this, i = index++] { send_message(play_drum{i}); };
+        };
+        wire(ui.drum_tabs.s1);
+        wire(ui.drum_tabs.s2);
+        wire(ui.drum_tabs.s3);
+        wire(ui.drum_tabs.s4);
+        wire(ui.drum_tabs.s5);
+        wire(ui.drum_tabs.s6);
+        wire(ui.drum_tabs.s7);
+        wire(ui.drum_tabs.s8);
+      }
+    };
 
     struct
     {

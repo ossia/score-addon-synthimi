@@ -1,6 +1,5 @@
 #pragma once
 
-#pragma once
 
 /* Custom avnd::painter UI for the 4-operator matrix FM synth.
  *
@@ -30,11 +29,13 @@
  * avnd::painter only requires that `{r, g, b, a}` be constructible. Colours
  * must therefore be braced-init-lists at the call site -- a named struct will
  * not convert. fill_rgba/stroke_rgba keep that property while still allowing
- * colours to be stored and selected conditionally.
+ * colours to be stored and selected conditionally. See MatrixPalette for
+ * skin colours.
  */
 
 #include <avnd/concepts/painter.hpp>
 #include <halp/custom_widgets.hpp>
+#include <halp/layout.hpp>
 
 #include <algorithm>
 #include <array>
@@ -72,17 +73,6 @@ inline float gainFromNorm(float v) noexcept
 
 using Rgba = std::array<unsigned char, 4>;
 
-inline constexpr Rgba kBg{18, 19, 23, 255};
-inline constexpr Rgba kWell{30, 32, 38, 255};
-inline constexpr Rgba kEdge{58, 62, 72, 255};
-inline constexpr Rgba kLabel{150, 156, 170, 255};
-inline constexpr Rgba kText{205, 210, 220, 255};
-inline constexpr Rgba kTextDark{16, 18, 22, 255};
-inline constexpr Rgba kMod{90, 165, 225, 220};
-inline constexpr Rgba kFeedback{215, 95, 120, 220};
-inline constexpr Rgba kOut{225, 170, 70, 220};
-inline constexpr Rgba kHilite{255, 255, 255, 230};
-
 template <typename Ctx>
 inline void fill_rgba(Ctx& ctx, const Rgba& c)
 {
@@ -95,29 +85,54 @@ inline void stroke_rgba(Ctx& ctx, const Rgba& c)
   ctx.set_stroke_color({c[0], c[1], c[2], c[3]});
 }
 
-inline Rgba withAlpha(Rgba c, unsigned char a)
+// From the host skin when it has to_rgba, else these defaults
+struct MatrixPalette
 {
-  c[3] = a;
-  return c;
-}
+  Rgba well{24, 25, 25, 255};         // empty cell
+  Rgba edge{55, 55, 55, 255};         // cell borders, dividers, value track
+  Rgba label{127, 127, 127, 255};     // headers, and readouts of empty cells
+  Rgba text{200, 200, 200, 255};      // readouts of cells in use
+  Rgba accent{224, 176, 30, 255};     // value fill, as on a slider
+  Rgba hilite{255, 255, 255, 255};    // the cell being dragged
+
+  template <typename Ctx>
+  static MatrixPalette from(Ctx& ctx)
+  {
+    MatrixPalette p;
+    if constexpr(requires { ctx.to_rgba(halp::colors::light); })
+    {
+      auto get = [&](halp::colors c) {
+        const auto v = ctx.to_rgba(c);
+        return Rgba{v.r, v.g, v.b, v.a};
+      };
+      p.well = get(halp::colors::background_dark);
+      p.edge = get(halp::colors::darker);
+      p.label = get(halp::colors::mid);
+      p.text = get(halp::colors::lighter);
+      p.accent = get(halp::colors::runtime_value_mid);
+      p.hilite = get(halp::colors::light);
+    }
+    return p;
+  }
+};
 
 struct ModMatrixWidget
 {
   // ---- geometry -------------------------------------------------------
-  static constexpr double kCellW = 54.;
-  static constexpr double kCellH = 34.;
-  static constexpr double kGap = 4.;
-  static constexpr double kGutter = 46.;  // row labels on the left
-  static constexpr double kHeader = 22.;  // column labels on top
-  static constexpr double kGraphTop = 186.;
+  static constexpr double kCellW = 50.;
+  static constexpr double kCellH = 24.;
+  static constexpr double kGap = 3.;
+  static constexpr double kOutGap = 12.; // sets the level column apart
+  static constexpr double kGutter = 52.; // row labels on the left
+  static constexpr double kHeader = 16.; // column labels on top
 
-  static constexpr double width()
+  static constexpr double width() { return cellX(kMatrixOps) + kCellW + 1.; }
+  static constexpr double height() { return cellY(kMatrixOps - 1) + kCellH + 1.; }
+
+  static constexpr double cellX(int col)
   {
-    return kGutter + kMatrixCols * kCellW + (kMatrixCols - 1) * kGap + 8.;
+    return kGutter + col * (kCellW + kGap) + (col == kMatrixOps ? kOutGap : 0.);
   }
-  static constexpr double height() { return 316.; }
-
-  static constexpr double cellX(int col) { return kGutter + col * (kCellW + kGap); }
   static constexpr double cellY(int row) { return kHeader + row * (kCellH + kGap); }
 
   // ---- state ----------------------------------------------------------
@@ -151,47 +166,55 @@ struct ModMatrixWidget
   }
 
   // ---- painting -------------------------------------------------------
+  // No background or font of its own: uses the layout's and the host's
   void paint(avnd::painter auto ctx)
   {
-    ctx.set_font("Inconsolata");
+    const auto pal = MatrixPalette::from(ctx);
 
-    ctx.begin_path();
-    fill_rgba(ctx, kBg);
-    ctx.draw_rounded_rect(0., 0., width(), height(), 6.);
-    ctx.fill();
-
-    paintHeaders(ctx);
-    paintCells(ctx);
-    paintRouting(ctx);
+    paintHeaders(ctx, pal);
+    paintCells(ctx, pal);
   }
 
-  void paintHeaders(avnd::painter auto& ctx)
+  void paintHeaders(avnd::painter auto& ctx, const MatrixPalette& pal)
   {
-    ctx.set_font_size(10.);
+    // Columns: sources, rows: modulated operators
+    ctx.begin_path();
+    fill_rgba(ctx, pal.label);
+    ctx.draw_text(2., kHeader - 5., "to\\from");
+    ctx.fill();
 
     for(int c = 0; c < kMatrixCols; ++c)
     {
       const bool out = (c == kMatrixOps);
+      const std::string txt = out ? "Level" : "Op " + std::to_string(c + 1);
       ctx.begin_path();
-      fill_rgba(ctx, out ? kOut : kLabel);
-      ctx.draw_text(
-          cellX(c) + 14., kHeader - 8.,
-          out ? std::string("OUT") : ("OP" + std::to_string(c + 1)));
+      fill_rgba(ctx, pal.label);
+      ctx.draw_text(centeredX(cellX(c), kCellW, txt), kHeader - 5., txt);
       ctx.fill();
     }
 
     for(int r = 0; r < kMatrixOps; ++r)
     {
       ctx.begin_path();
-      fill_rgba(ctx, kLabel);
-      ctx.draw_text(
-          6., cellY(r) + kCellH * 0.5 + 4., "-> OP" + std::to_string(r + 1));
+      fill_rgba(ctx, pal.label);
+      ctx.draw_text(2., cellY(r) + kCellH * 0.5 + 3., "Op " + std::to_string(r + 1));
       ctx.fill();
     }
+
+    // Divider between the modulation block and the output levels
+    const double dx = cellX(kMatrixOps) - (kGap + kOutGap) * 0.5;
+    ctx.begin_path();
+    ctx.set_stroke_width(1.);
+    stroke_rgba(ctx, pal.edge);
+    ctx.draw_line(dx, cellY(0), dx, cellY(kMatrixOps - 1) + kCellH);
+    ctx.stroke();
   }
 
-  void paintCells(avnd::painter auto& ctx)
+  void paintCells(avnd::painter auto& ctx, const MatrixPalette& pal)
   {
+    constexpr double kTrackH = 3.;
+    constexpr double kPad = 3.;
+
     for(int r = 0; r < kMatrixOps; ++r)
     {
       for(int c = 0; c < kMatrixCols; ++c)
@@ -203,145 +226,45 @@ struct ModMatrixWidget
         const bool isOut = (c == kMatrixOps);
         const bool isFeedback = (!isOut && r == c);
         const bool isDrag = (r == dragRow && c == dragCol);
+        const bool active = v > 0.001f;
 
-        const Rgba accent = isOut ? kOut : (isFeedback ? kFeedback : kMod);
-
-        // Well
+        // Well. Lighter border on the diagonal (feedback)
         ctx.begin_path();
-        fill_rgba(ctx, kWell);
-        ctx.draw_rounded_rect(x, y, kCellW, kCellH, 3.);
+        fill_rgba(ctx, pal.well);
+        ctx.draw_rounded_rect(x, y, kCellW, kCellH, 2.);
         ctx.fill();
 
-        // Level fill, growing from the bottom
-        if(v > 0.001f)
+        ctx.begin_path();
+        ctx.set_stroke_width(1.);
+        stroke_rgba(ctx, isDrag ? pal.hilite : isFeedback ? pal.label : pal.edge);
+        ctx.draw_rounded_rect(x, y, kCellW, kCellH, 2.);
+        ctx.stroke();
+
+        // Value track along the bottom, below the readout
+        const double tx = x + kPad;
+        const double ty = y + kCellH - kPad - kTrackH;
+        const double tw = kCellW - 2. * kPad;
+        ctx.begin_path();
+        fill_rgba(ctx, pal.edge);
+        ctx.draw_rect(tx, ty, tw, kTrackH);
+        ctx.fill();
+
+        if(active)
         {
-          const double h = (kCellH - 4.) * double(v);
           ctx.begin_path();
-          fill_rgba(ctx, accent);
-          ctx.draw_rounded_rect(x + 2., y + kCellH - 2. - h, kCellW - 4., h, 2.);
+          fill_rgba(ctx, pal.accent);
+          ctx.draw_rect(tx, ty, tw * double(v), kTrackH);
           ctx.fill();
         }
 
-        // Border: tinted on the diagonal and output column, bright on drag
-        ctx.begin_path();
-        ctx.set_stroke_width(isDrag ? 2. : 1.);
-        stroke_rgba(
-            ctx, isDrag ? kHilite
-                   : ((isFeedback || isOut) ? withAlpha(accent, 140) : kEdge));
-        ctx.draw_rounded_rect(x, y, kCellW, kCellH, 3.);
-        ctx.stroke();
-
         // Readout shows the *mapped* value, not the raw normalised cell
+        const std::string txt = isOut ? levelText(v) : indexText(v);
         ctx.begin_path();
-        ctx.set_font_size(10.);
-        fill_rgba(ctx, v > 0.55f ? kTextDark : kText);
-        ctx.draw_text(
-            x + 5., y + kCellH * 0.5 + 4., isOut ? levelText(v) : indexText(v));
+        fill_rgba(ctx, active ? pal.text : pal.label);
+        ctx.draw_text(centeredX(x, kCellW, txt), y + 12., txt);
         ctx.fill();
       }
     }
-  }
-
-  // Compact algorithm view: operator nodes, modulation arcs, output bus.
-  void paintRouting(avnd::painter auto& ctx)
-  {
-    constexpr double nodeW = 46.;
-    constexpr double nodeH = 24.;
-    const double nodeY = kGraphTop + 56.;
-    const double busY = kGraphTop + 108.;
-
-    ctx.begin_path();
-    ctx.set_stroke_width(1.);
-    stroke_rgba(ctx, kEdge);
-    ctx.draw_line(8., kGraphTop - 8., width() - 8., kGraphTop - 8.);
-    ctx.stroke();
-
-    auto nodeX = [](int op) { return cellX(op) + (kCellW - nodeW) * 0.5; };
-
-    // Modulation arcs first, so the nodes paint over their endpoints
-    for(int dst = 0; dst < kMatrixOps; ++dst)
-    {
-      for(int src = 0; src < kMatrixOps; ++src)
-      {
-        const float v = at(dst, src);
-        if(v <= 0.005f)
-          continue;
-
-        const double w = 1. + 3. * std::clamp(double(v), 0., 1.);
-        const double sx = nodeX(src) + nodeW * 0.5;
-        const double dx = nodeX(dst) + nodeW * 0.5;
-
-        if(src == dst)
-        {
-          // Self-feedback: a loop above the node
-          ctx.begin_path();
-          ctx.set_stroke_width(w);
-          stroke_rgba(ctx, kFeedback);
-          ctx.move_to(sx - 10., nodeY);
-          ctx.cubic_to(sx - 26., nodeY - 34., sx + 26., nodeY - 34., sx + 10., nodeY);
-          ctx.stroke();
-          arrowHead(ctx, sx + 10., nodeY, kFeedback);
-        }
-        else
-        {
-          const double lift = 18. + 12. * std::abs(dst - src);
-          ctx.begin_path();
-          ctx.set_stroke_width(w);
-          stroke_rgba(ctx, kMod);
-          ctx.move_to(sx, nodeY);
-          ctx.cubic_to(sx, nodeY - lift, dx, nodeY - lift, dx, nodeY);
-          ctx.stroke();
-          arrowHead(ctx, dx, nodeY, kMod);
-        }
-      }
-    }
-
-    // Operator nodes
-    for(int op = 0; op < kMatrixOps; ++op)
-    {
-      const double x = nodeX(op);
-      const double lvl = std::clamp(double(at(op, kMatrixOps)), 0., 1.);
-      const bool carrier = lvl > 0.005;
-
-      ctx.begin_path();
-      fill_rgba(ctx, carrier ? Rgba{52, 46, 30, 255} : Rgba{34, 37, 44, 255});
-      ctx.draw_rounded_rect(x, nodeY, nodeW, nodeH, 4.);
-      ctx.fill();
-
-      ctx.begin_path();
-      ctx.set_stroke_width(1.);
-      stroke_rgba(ctx, carrier ? kOut : Rgba{70, 76, 90, 255});
-      ctx.draw_rounded_rect(x, nodeY, nodeW, nodeH, 4.);
-      ctx.stroke();
-
-      ctx.begin_path();
-      ctx.set_font_size(10.);
-      fill_rgba(ctx, kText);
-      ctx.draw_text(x + 8., nodeY + nodeH * 0.5 + 4., "OP" + std::to_string(op + 1));
-      ctx.fill();
-
-      if(carrier)
-      {
-        ctx.begin_path();
-        ctx.set_stroke_width(1. + 3. * lvl);
-        stroke_rgba(ctx, kOut);
-        ctx.draw_line(x + nodeW * 0.5, nodeY + nodeH, x + nodeW * 0.5, busY);
-        ctx.stroke();
-      }
-    }
-
-    // Output bus
-    ctx.begin_path();
-    ctx.set_stroke_width(2.);
-    stroke_rgba(ctx, withAlpha(kOut, 160));
-    ctx.draw_line(kGutter, busY, width() - 12., busY);
-    ctx.stroke();
-
-    ctx.begin_path();
-    ctx.set_font_size(10.);
-    fill_rgba(ctx, kOut);
-    ctx.draw_text(8., busY + 4., "OUT");
-    ctx.fill();
   }
 
   // ---- interaction ----------------------------------------------------
@@ -366,7 +289,7 @@ struct ModMatrixWidget
       return false;
 
     // Relative vertical drag: 140 px traverses the full range, which gives
-    // usable resolution on a 34 px cell. Absolute positioning inside the cell
+    // usable resolution on a small cell. Absolute positioning inside the cell
     // would make fine adjustments impossible.
     constexpr double kSpan = 140.;
     const double v = double(dragStartVal) - (y - dragStartY) / kSpan;
@@ -408,6 +331,12 @@ struct ModMatrixWidget
   void reset() { dragRow = dragCol = -1; }
 
 private:
+  // The painter cannot measure text: ~5 px per glyph
+  static double centeredX(double x, double w, const std::string& txt)
+  {
+    return x + std::max(2., (w - 5. * double(txt.size())) * 0.5);
+  }
+
   static std::string indexText(float norm)
   {
     char buf[16];
@@ -420,21 +349,8 @@ private:
     if(norm <= 0.f)
       return "-inf";
     char buf[16];
-    std::snprintf(buf, sizeof(buf), "%.0fdB", double((norm - 1.f) * kLevelRangeDb));
+    std::snprintf(buf, sizeof(buf), "%.0f dB", double((norm - 1.f) * kLevelRangeDb));
     return buf;
-  }
-
-  // Small downward-pointing filled triangle at the arc endpoint.
-  static void arrowHead(avnd::painter auto& ctx, double x, double y, const Rgba& col)
-  {
-    constexpr double s = 5.;
-    ctx.begin_path();
-    fill_rgba(ctx, col);
-    ctx.move_to(x, y + s);
-    ctx.line_to(x - s * 0.7, y - s * 0.4);
-    ctx.line_to(x + s * 0.7, y - s * 0.4);
-    ctx.close_path();
-    ctx.fill();
   }
 };
 
@@ -447,6 +363,7 @@ private:
 #include <halp/compat/gamma.hpp>
 #include <halp/controls.hpp>
 #include <halp/controls.enums.hpp>
+#include <halp/envelope_editor.hpp>
 #include <halp/layout.hpp>
 #include <halp/meta.hpp>
 #include <halp/midi.hpp>
@@ -1509,13 +1426,13 @@ struct VoiceGroup
   halp::hslider_f32<"Op " NUM " Detune", halp::range{-100.f, 100.f, 0.f}>      \
       detune_##IDX;                                                            \
   halp::enum_t<WaveformFM, "Op " NUM " Wave"> wave_##IDX;                        \
-  halp::hslider_f32<"Op " NUM " Attack", halp::range{0.001f, 4.f, 0.01f}>      \
+  halp::time_chooser<"Op " NUM " Attack", halp::range{0., 4., 0.01}>          \
       attack_##IDX;                                                            \
-  halp::hslider_f32<"Op " NUM " Decay", halp::range{0.001f, 8.f, 0.3f}>        \
+  halp::time_chooser<"Op " NUM " Decay", halp::range{0., 8., 0.3}>            \
       decay_##IDX;                                                             \
   halp::hslider_f32<"Op " NUM " Sustain", halp::range{0.f, 1.f, 0.7f}>         \
       sustain_##IDX;                                                           \
-  halp::hslider_f32<"Op " NUM " Release", halp::range{0.001f, 8.f, 0.4f}>      \
+  halp::time_chooser<"Op " NUM " Release", halp::range{0., 8., 0.4}>          \
       release_##IDX;                                                           \
   halp::hslider_f32<"Op " NUM " Vel Depth", halp::range{0.f, 1.f, 0.f}>        \
       vel_##IDX;                                                               \
@@ -1529,38 +1446,85 @@ struct VoiceGroup
       am_##IDX;                                                                \
   halp::enum_t<PhaseMode, "Op " NUM " Phase"> phase_##IDX;
 
-// Matching block in the ui: one tab per operator.
-#define SYNTHIMI_OP_TAB(IDX, LABEL)                                            \
+inline constexpr halp::look small_knob{
+    .size = halp::control_size::compact, .widget = halp::control_widget::knob};
+inline constexpr halp::look dropdown{.widget = halp::control_widget::combo};
+consteval halp::look small_knob_as(std::string_view name)
+{
+  auto l = halp::label_as(name);
+  l.size = halp::control_size::compact;
+  l.widget = halp::control_widget::knob;
+  return l;
+}
+inline constexpr halp::look large_knob{
+    .size = halp::control_size::large, .widget = halp::control_widget::knob};
+consteval halp::look dropdown_as(std::string_view name)
+{
+  auto l = halp::label_as(name);
+  l.widget = halp::control_widget::combo;
+  return l;
+}
+
+// Operator overview row
+#define SYNTHIMI_OP_OVERVIEW_ROW(IDX, LABEL)                                   \
   struct                                                                       \
   {                                                                            \
     halp_meta(name, LABEL)                                                     \
-    halp_meta(layout, halp::layouts::vbox)                                     \
+    halp_meta(layout, halp::layouts::hbox)                                     \
+    halp::control<&ins::wave_##IDX, dropdown> wave;                            \
+    halp::control<&ins::ratio_##IDX, small_knob> ratio;                        \
+    halp::control<&ins::fixed_##IDX, small_knob> fixed;                        \
+    halp::control<&ins::detune_##IDX, small_knob> detune;                      \
+    halp::control<&ins::phase_##IDX, dropdown> phase;                          \
+    halp::custom_multi_control<                                                \
+        halp::envelope_editor, &ins::attack_##IDX, &ins::decay_##IDX,          \
+        &ins::sustain_##IDX, &ins::release_##IDX>                              \
+        shape;                                                                 \
+  } op##IDX;
+
+// Detail page of the operator selected in the overview
+#define SYNTHIMI_OP_DETAIL_PAGE(IDX, LABEL)                                    \
+  struct                                                                       \
+  {                                                                            \
+    halp_meta(name, LABEL)                                                     \
+    halp_meta(layout, halp::layouts::section)                                  \
     struct                                                                     \
     {                                                                          \
-      halp_meta(layout, halp::layouts::hbox)                                   \
-      halp::control<&ins::wave_##IDX> wave;                                    \
-      halp::control<&ins::ratio_##IDX> ratio;                                  \
-      halp::control<&ins::fixed_##IDX> fixed;                                  \
-      halp::control<&ins::detune_##IDX> detune;                                \
-      halp::control<&ins::phase_##IDX> phase;                                  \
-    } tuning;                                                                  \
+    halp_meta(layout, halp::layouts::hbox)                                     \
     struct                                                                     \
     {                                                                          \
-      halp_meta(layout, halp::layouts::hbox)                                   \
-      halp::control<&ins::attack_##IDX> a;                                     \
-      halp::control<&ins::decay_##IDX> d;                                      \
-      halp::control<&ins::sustain_##IDX> s;                                    \
-      halp::control<&ins::release_##IDX> r;                                    \
-      halp::control<&ins::krs_##IDX> krs;                                      \
+      halp_meta(name, "Envelope")                                              \
+      halp_meta(layout, halp::layouts::section)                                \
+      halp_meta(background, halp::colors::background_dark)                     \
+      struct                                                                   \
+      {                                                                        \
+        halp_meta(layout, halp::layouts::hbox)                                 \
+        halp::custom_multi_control<                                            \
+            halp::basic_envelope_editor<170, 64>, &ins::attack_##IDX,          \
+            &ins::decay_##IDX, &ins::sustain_##IDX, &ins::release_##IDX>       \
+            shape;                                                             \
+        halp::control<&ins::attack_##IDX, small_knob_as("A")> a;               \
+        halp::control<&ins::decay_##IDX, small_knob_as("D")> d;                \
+        halp::control<&ins::sustain_##IDX, small_knob_as("S")> s;              \
+        halp::control<&ins::release_##IDX, small_knob_as("R")> r;              \
+        halp::control<&ins::krs_##IDX, small_knob_as("Key Rate")> krs;         \
+      } row;                                                                   \
     } envelope;                                                                \
     struct                                                                     \
     {                                                                          \
-      halp_meta(layout, halp::layouts::hbox)                                   \
-      halp::control<&ins::vel_##IDX> vel;                                      \
-      halp::control<&ins::klsbrk_##IDX> brk;                                   \
-      halp::control<&ins::klsdep_##IDX> dep;                                   \
-      halp::control<&ins::am_##IDX> am;                                        \
+      halp_meta(name, "Scaling")                                               \
+      halp_meta(layout, halp::layouts::section)                                \
+      halp_meta(background, halp::colors::background_dark)                     \
+      struct                                                                   \
+      {                                                                        \
+        halp_meta(layout, halp::layouts::hbox)                                 \
+        halp::control<&ins::vel_##IDX, small_knob_as("Velocity")> vel;         \
+        halp::control<&ins::am_##IDX, small_knob_as("AM")> am;                 \
+        halp::control<&ins::klsbrk_##IDX, small_knob_as("Break")> brk;         \
+        halp::control<&ins::klsdep_##IDX, small_knob_as("dB/oct")> dep;        \
+      } knobs;                                                                 \
     } scaling;                                                                 \
+    } content;                                                                 \
   } op##IDX;
 
 struct Fomo
@@ -1596,14 +1560,19 @@ struct Fomo
     SYNTHIMI_OP_PORTS(3, "4", 4.f)
 
     // Global pitch envelope
-    halp::hslider_f32<"Pitch Atk", halp::range{0.001f, 4.f, 0.02f}> peg_attack;
-    halp::hslider_f32<"Pitch Dcy", halp::range{0.001f, 4.f, 0.15f}> peg_decay;
+    halp::time_chooser<"Pitch Atk", halp::range{0., 4., 0.02}> peg_attack;
+    halp::time_chooser<"Pitch Dcy", halp::range{0., 4., 0.15}> peg_decay;
     halp::hslider_f32<"Pitch Depth", halp::range{-24.f, 24.f, 0.f}> peg_depth;
 
     // Global LFO
     halp::enum_t<LfoShape, "LFO Shape"> lfo_shape;
-    halp::hslider_f32<"LFO Rate", halp::range{0.01f, 40.f, 5.f}> lfo_rate;
-    halp::hslider_f32<"LFO Delay", halp::range{0.f, 4.f, 0.f}> lfo_delay;
+    //! One LFO cycle: seconds, or a note value.
+    struct : halp::time_chooser<"LFO Period", halp::range{0.025, 100., 0.2}>
+    {
+      //! Documents from when this was "LFO Rate" hold a frequency, in Hz.
+      static float upgrade_value(float hz) noexcept { return hz > 0.f ? 1.f / hz : 0.2f; }
+    } lfo_period;
+    halp::time_chooser<"LFO Delay", halp::range{0., 4., 0.}> lfo_delay;
     halp::hslider_f32<"LFO Pitch", halp::range{0.f, 12.f, 0.f}> lfo_pitch;
 
     halp::enum_t<AntiAlias, "Antialias"> aa_mode;
@@ -1829,7 +1798,7 @@ struct Fomo
     const float pegAtk = inputs.peg_attack.value;
     const float pegDcy = inputs.peg_decay.value;
     const float pegDepth = inputs.peg_depth.value;
-    const float lfoRate = inputs.lfo_rate.value;
+    const float lfoRate = 1.f / std::max(1e-3f, inputs.lfo_period.value);
     const float lfoDelay = inputs.lfo_delay.value;
     const float lfoPitch = inputs.lfo_pitch.value;
     const LfoShape lfoShape = inputs.lfo_shape.value;
@@ -1887,56 +1856,105 @@ struct Fomo
     halp_meta(name, "Main")
     halp_meta(layout, vbox)
     halp_meta(background, background_dark)
-    halp_meta(width, 380)
-    halp_meta(height, 700)
-
-    halp::custom_control<ModMatrixWidget, &ins::matrix> matrix;
 
     struct
     {
-      halp_meta(layout, tabs)
-      SYNTHIMI_OP_TAB(0, "Op 1")
-      SYNTHIMI_OP_TAB(1, "Op 2")
-      SYNTHIMI_OP_TAB(2, "Op 3")
-      SYNTHIMI_OP_TAB(3, "Op 4")
-    } operators;
+      halp_meta(layout, hbox)
+      struct
+      {
+        halp_meta(name, "FM Matrix")
+        halp_meta(layout, section)
+        halp_meta(background, background_mid)
+        halp::custom_control<ModMatrixWidget, &ins::matrix> matrix;
+      } matrix;
+
+      struct
+      {
+        halp_meta(name, "Operators")
+        halp_meta(layout, section)
+        halp_meta(background, background_mid)
+        struct
+        {
+          halp_meta(layout, table)
+          halp_meta(selection, "operator")
+          static constexpr auto columns()
+          {
+            return std::array<std::string_view, 6>{
+                "Wave", "Ratio", "Fixed", "Detune", "Phase", "Envelope"};
+          }
+          SYNTHIMI_OP_OVERVIEW_ROW(0, "Op 1")
+          SYNTHIMI_OP_OVERVIEW_ROW(1, "Op 2")
+          SYNTHIMI_OP_OVERVIEW_ROW(2, "Op 3")
+          SYNTHIMI_OP_OVERVIEW_ROW(3, "Op 4")
+        } rows;
+      } operators;
+    } top;
 
     struct
     {
-      halp_meta(name, "Global")
-      halp_meta(layout, vbox)
+      halp_meta(layout, strip_detail)
+      halp_meta(selection, "operator")
+      halp_flag(hide_tabs);
+      halp_meta(background, background_mid)
+      SYNTHIMI_OP_DETAIL_PAGE(0, "Op 1")
+      SYNTHIMI_OP_DETAIL_PAGE(1, "Op 2")
+      SYNTHIMI_OP_DETAIL_PAGE(2, "Op 3")
+      SYNTHIMI_OP_DETAIL_PAGE(3, "Op 4")
+    } op;
+
+    struct
+    {
+      halp_meta(layout, hbox)
+      struct
+      {
+        halp_meta(name, "Pitch Env")
+        halp_meta(layout, section)
+        halp_meta(background, background_mid)
+        struct
+        {
+          halp_meta(layout, hbox)
+          halp::control<&ins::peg_attack, small_knob_as("Attack")> a;
+          halp::control<&ins::peg_decay, small_knob_as("Decay")> d;
+          halp::control<&ins::peg_depth, small_knob_as("Depth")> depth;
+        } knobs;
+      } pitch;
 
       struct
       {
-        halp_meta(layout, hbox)
-        halp::control<&ins::peg_attack> a;
-        halp::control<&ins::peg_decay> d;
-        halp::control<&ins::peg_depth> depth;
-      } pitchEnvelope;
-
-      struct
-      {
-        halp_meta(layout, hbox)
-        halp::control<&ins::lfo_shape> shape;
-        halp::control<&ins::lfo_rate> rate;
-        halp::control<&ins::lfo_delay> delay;
-        halp::control<&ins::lfo_pitch> pitch;
+        halp_meta(name, "LFO")
+        halp_meta(layout, section)
+        halp_meta(background, background_mid)
+        struct
+        {
+          halp_meta(layout, hbox)
+          halp::control<&ins::lfo_shape, dropdown_as("Shape")> shape;
+          halp::control<&ins::lfo_period, small_knob_as("Period")> rate;
+          halp::control<&ins::lfo_delay, small_knob_as("Delay")> delay;
+          halp::control<&ins::lfo_pitch, small_knob_as("Pitch")> pitch;
+        } knobs;
       } lfo;
 
       struct
       {
-        halp_meta(layout, hbox)
-        halp::control<&ins::aa_mode> aa;
-        halp::control<&ins::index_limit> limit;
-        halp::control<&ins::gain> gain;
+        halp_meta(name, "Output")
+        halp_meta(layout, section)
+        halp_meta(background, background_mid)
+        struct
+        {
+          halp_meta(layout, hbox)
+          halp::control<&ins::aa_mode, dropdown> aa;
+          halp::control<&ins::index_limit, small_knob_as("Index Limit")> limit;
+          halp::control<&ins::gain, large_knob> gain;
+        } knobs;
       } output;
     } global;
 
-    void reset() { matrix.reset(); }
+    void reset() { top.matrix.matrix.reset(); }
   };
 };
 
 #undef SYNTHIMI_OP_PORTS
-#undef SYNTHIMI_OP_TAB
+#undef SYNTHIMI_OP_OVERVIEW_ROW
+#undef SYNTHIMI_OP_DETAIL_PAGE
 
 }
