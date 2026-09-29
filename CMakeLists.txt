@@ -231,3 +231,19 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
       COMMAND score_addon_synthimi_kaboom_play_test)
   endif()
 endif()
+
+# Documents saved when the envelope times were log knobs, loaded by the
+# application with this add-on: the knobs come back as time choosers.
+if(SCORE_TESTING AND COMMAND score_add_test)
+  score_add_test(score_addon_synthimi_envelope_times_upgrade_test
+    SOURCES tests/EnvelopeTimesUpgradeTest.cpp
+    APP
+    PLUGINS score_plugin_engine score_plugin_scenario score_lib_process)
+  add_dependencies(score_addon_synthimi_envelope_times_upgrade_test score_addon_synthimi)
+  target_include_directories(score_addon_synthimi_envelope_times_upgrade_test PRIVATE
+    # score_test_fixtures carries this include dir, but it is declared after
+    # the addons, so its INTERFACE properties are not there to inherit yet.
+    "${SCORE_ROOT_SOURCE_DIR}/tests/fixtures")
+  target_compile_definitions(score_addon_synthimi_envelope_times_upgrade_test PRIVATE
+    SYNTHIMI_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+endif()
