@@ -188,4 +188,17 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
     Catch2::Catch2WithMain score_plugin_avnd)
   add_test(NAME score_addon_synthimi_fomo_envelope_test
     COMMAND score_addon_synthimi_fomo_envelope_test)
+
+  # Same compiler requirement as the kaboom object itself
+  if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+          AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+               OR NOT CXX_VERSION_FLAG STREQUAL "cxx_std_26")))
+    add_executable(score_addon_synthimi_kaboom_play_test tests/KaboomPlayTest.cpp)
+    target_include_directories(score_addon_synthimi_kaboom_play_test PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(score_addon_synthimi_kaboom_play_test PRIVATE
+      Catch2::Catch2WithMain score_plugin_avnd)
+    add_test(NAME score_addon_synthimi_kaboom_play_test
+      COMMAND score_addon_synthimi_kaboom_play_test)
+  endif()
 endif()
