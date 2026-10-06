@@ -1531,6 +1531,11 @@ struct Fomo
 {
   static consteval auto name() { return "FoMo"; }
   static consteval auto category() { return "Audio/Synth"; }
+  static consteval auto description()
+  {
+    return "Play a four-operator FM synthesizer with a configurable modulation matrix and MIDI "
+           "control.";
+  }
   static consteval auto c_name() { return "fomo"; }
   static consteval auto uuid() { return "e9f0a1b2-3c4d-5e6f-7a8b-9c0d1e2f3a4b"; }
 
