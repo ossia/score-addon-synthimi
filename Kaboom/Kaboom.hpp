@@ -1743,7 +1743,7 @@ class Kaboom
 {
 public:
   halp_meta(name, "Kaboom")
-  halp_meta(category, "Audio/Synth")
+  halp_meta(category, "Synths")
   halp_meta(c_name, "kaboom")
   halp_meta(author, "Jean-Michaël Celerier")
   halp_meta(description, "8-channel modal / analog / FM drum synthesiser")

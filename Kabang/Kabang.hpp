@@ -132,7 +132,7 @@ class Kabang
 {
 public:
   halp_meta(name, "Kabang")
-  halp_meta(category, "Audio/Synth")
+  halp_meta(category, "Synths")
   halp_meta(c_name, "kabang")
   halp_meta(author, "Jean-Michaël Celerier")
   halp_meta(description, "Basic MIDI drum sampler")
