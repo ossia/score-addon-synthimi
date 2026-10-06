@@ -22,7 +22,7 @@ class Minibang
 {
 public:
   halp_meta(name, "Minibang")
-  halp_meta(category, "Audio/Synth")
+  halp_meta(category, "Synths")
   halp_meta(c_name, "minibang")
   halp_meta(author, "Jean-Michaël Celerier")
   halp_meta(description, "Basic MIDI drum sampler")

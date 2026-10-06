@@ -180,7 +180,7 @@ class Synthimi
 {
 public:
   halp_meta(name, "Synthimi")
-  halp_meta(category, "Audio/Synth")
+  halp_meta(category, "Synths")
   halp_meta(author, "Jean-Michaël Celerier")
   halp_meta(
       description,

@@ -1530,7 +1530,7 @@ consteval halp::look dropdown_as(std::string_view name)
 struct Fomo
 {
   static consteval auto name() { return "FoMo"; }
-  static consteval auto category() { return "Audio/Synth"; }
+  static consteval auto category() { return "Synths"; }
   static consteval auto description()
   {
     return "Play a four-operator FM synthesizer with a configurable modulation matrix and MIDI "
