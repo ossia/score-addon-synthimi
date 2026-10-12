@@ -456,6 +456,7 @@ HALP_INLINE_FLATTEN double Subvoice::run(Voice& v, Synthimi& s)
   nan_detector wf[4] = {0.};
   switch (p.matrix)
   {
+    default:
     case decltype(p.matrix)::S: // Sum
     {
       if (a0 != 0.)
@@ -594,6 +595,7 @@ Frame Voice::run(Synthimi& synth)
       params[2] = q;                                     // Q
       switch (p.filt_type)
       {
+        default:
         case decltype(p.filt_type)::LPF:
           params[1] = std::max(20., cutf);
           this->lowpassFilter.setParams(params);
@@ -610,6 +612,7 @@ Frame Voice::run(Synthimi& synth)
 
     switch (p.filt_type)
     {
+      default:
       case decltype(p.filt_type)::LPF:
         this->lowpassFilter.process(1, arr);
         break;

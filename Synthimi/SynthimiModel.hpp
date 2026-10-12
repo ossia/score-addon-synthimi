@@ -29,7 +29,7 @@ struct Waveform
     Triangle,
     Sawtooth,
     Noise
-  } value;
+  } value{Sine};
   enum widget
   {
     enumeration,
@@ -261,7 +261,7 @@ public:
     struct
     {
       halp__enum_combobox("Type", LPF, LPF, HPF)
-    } filt_type;
+    } filt_type{decltype(filt_type)::range{}.init};
     halp::knob_f32<"Cutoff", halp::range{20., 20000., 2000.}> filt_cutoff;
     // This is the RBJ Q, handed straight to Dsp::Params[2]. The range read
     // {0., 0., 1.} -- min == max == 0 with an init of 1 -- so the knob could
@@ -275,7 +275,7 @@ public:
     struct
     {
       halp__enum_combobox("Polyphony", Poly, Mono, Poly)
-    } poly_mode;
+    } poly_mode{decltype(poly_mode)::range{}.init};
     halp::time_chooser<"Porta", halp::range{0., 2., 0.}> portamento;
 
     halp::toggle<"Filter", halp::toggle_setup{true}> filt_env;
@@ -284,7 +284,7 @@ public:
     struct
     {
       halp__enum_combobox("Modmatrix", S, S, C, CSP, CST, CSC)
-    } matrix;
+    } matrix{decltype(matrix)::range{}.init};
     halp::knob_i32<"Unison", halp::irange{0, 16, 0}> unison;
   } inputs;
 
