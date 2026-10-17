@@ -102,6 +102,10 @@ else()
   )
 endif()
 
+if("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
+  target_compile_options(score_addon_synthimi PRIVATE -fbracket-depth=1024)
+endif()
+
 # Kabang's sampler pitch-shifts through RubberBand; the target PUBLICly
 # exports the include dir that satisfies Sampler.hpp's __has_include chain
 # (without it the include silently vanishes and RubberBand:: fails to
