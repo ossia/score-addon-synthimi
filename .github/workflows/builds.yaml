@@ -12,7 +12,9 @@ concurrency:
 
 jobs:
   ci:
-    uses: ossia/actions/.github/workflows/score-addon.yml@master
+    uses: ossia/actions/.github/workflows/score-addon.yml@ci/target-score-3.9
     secrets: inherit
     with:
       jit: false
+      release: false
+      targets: windows/x86_64
