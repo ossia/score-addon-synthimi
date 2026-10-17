@@ -28,10 +28,67 @@ avnd_score_plugin_init(
 target_link_libraries(score_addon_synthimi
   PRIVATE
     score_plugin_engine score_plugin_avnd
-    "$<BUILD_INTERFACE:gamma>"
-    "$<BUILD_INTERFACE:dspfilters>"
-    "$<BUILD_INTERFACE:r8brain>"
 )
+
+set(SYNTHIMI_KFR_INCLUDE_DIR "${OSSIA_3RDPARTY_FOLDER}/kfr/include")
+
+if(TARGET gamma AND TARGET dspfilters AND TARGET r8brain)
+  target_link_libraries(score_addon_synthimi
+    PRIVATE
+      "$<BUILD_INTERFACE:gamma>"
+      "$<BUILD_INTERFACE:dspfilters>"
+      "$<BUILD_INTERFACE:r8brain>"
+  )
+else()
+  if(EXISTS "${SCORE_SDK}")
+    include(FetchContent)
+    FetchContent_Declare(synthimi_gamma
+      URL https://github.com/LancePutnam/Gamma/archive/65f98a3bfcc476e8434f94ea712c67d0f589321d.tar.gz
+      SOURCE_SUBDIR no-cmake
+    )
+    FetchContent_Declare(synthimi_dspfilters
+      URL https://github.com/jcelerier/DSPFilters/archive/b0688e6417a4915b4000ebc41836485911631857.tar.gz
+      SOURCE_SUBDIR no-cmake
+    )
+    FetchContent_Declare(synthimi_r8brain
+      URL https://github.com/avaneev/r8brain-free-src/archive/b3f0753d90b3325b8ea8a08fd699e8e6db26e5b5.tar.gz
+      SOURCE_SUBDIR no-cmake
+    )
+    FetchContent_Declare(synthimi_kfr
+      URL https://github.com/jcelerier/kfr/archive/32549939f5d4967e5d99327fd431fd5241effc8f.tar.gz
+      SOURCE_SUBDIR no-cmake
+    )
+    FetchContent_MakeAvailable(synthimi_gamma synthimi_dspfilters synthimi_r8brain synthimi_kfr)
+
+    set(SYNTHIMI_GAMMA_DIR "${synthimi_gamma_SOURCE_DIR}")
+    set(SYNTHIMI_DSPFILTERS_DIR "${synthimi_dspfilters_SOURCE_DIR}/DSPFilters")
+    set(SYNTHIMI_R8BRAIN_DIR "${synthimi_r8brain_SOURCE_DIR}")
+    set(SYNTHIMI_KFR_INCLUDE_DIR "${synthimi_kfr_SOURCE_DIR}/include")
+  else()
+    set(SYNTHIMI_GAMMA_DIR "${3RDPARTY_FOLDER}/Gamma")
+    set(SYNTHIMI_DSPFILTERS_DIR "${3RDPARTY_FOLDER}/DSPFilters/DSPFilters")
+    set(SYNTHIMI_R8BRAIN_DIR "${OSSIA_3RDPARTY_FOLDER}/r8brain-free-src")
+  endif()
+
+  file(GLOB SYNTHIMI_DSPFILTERS_SRCS "${SYNTHIMI_DSPFILTERS_DIR}/source/*.cpp")
+  set(SYNTHIMI_DEPENDENCIES_SRCS
+    "${SYNTHIMI_GAMMA_DIR}/src/Conversion.cpp"
+    "${SYNTHIMI_R8BRAIN_DIR}/r8bbase.cpp"
+    ${SYNTHIMI_DSPFILTERS_SRCS}
+  )
+  set_source_files_properties(${SYNTHIMI_DEPENDENCIES_SRCS}
+    PROPERTIES
+      SKIP_UNITY_BUILD_INCLUSION ON
+      COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>"
+  )
+  target_sources(score_addon_synthimi PRIVATE ${SYNTHIMI_DEPENDENCIES_SRCS})
+  target_include_directories(score_addon_synthimi
+    SYSTEM PRIVATE
+      "${SYNTHIMI_GAMMA_DIR}"
+      "${SYNTHIMI_DSPFILTERS_DIR}/include"
+      "${SYNTHIMI_R8BRAIN_DIR}"
+  )
+endif()
 
 if(OSSIA_ENABLE_KFR AND TARGET kfr)
   target_link_libraries(score_addon_synthimi
@@ -41,8 +98,12 @@ if(OSSIA_ENABLE_KFR AND TARGET kfr)
 else()
   target_include_directories(score_addon_synthimi
     PRIVATE
-      "$<BUILD_INTERFACE:${OSSIA_3RDPARTY_FOLDER}/kfr/include>"
+      "$<BUILD_INTERFACE:${SYNTHIMI_KFR_INCLUDE_DIR}>"
   )
+endif()
+
+if("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
+  target_compile_options(score_addon_synthimi PRIVATE -fbracket-depth=1024)
 endif()
 
 # Kabang's sampler pitch-shifts through RubberBand; the target PUBLICly
