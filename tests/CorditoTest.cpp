@@ -13,6 +13,7 @@
 #include <memory>
 #include <new>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 // Counts the allocations made while `g_watch` is set
@@ -643,6 +644,11 @@ TEST_CASE("Cordito: the enumerations keep their order", "[synthimi][cordito]")
   CHECK(names(PlayMode{}) == V{"Poly", "Mono", "Legato"});
   CHECK(
       names(Pressure{}) == V{"Auto", "Force", "Brightness", "BowSpeed", "Mute", "Off"});
+  CHECK(
+      names(LfoTarget{})
+      == V{"Off", "Pitch", "Level", "Pan", "Brightness", "Position", "BowSpeed", "Force",
+           "Buzz"});
+  CHECK(names(LfoShape{}) == V{"Sine", "Triangle", "SawUp", "SawDown", "Square", "Random"});
 }
 
 TEST_CASE("Cordito: the sustain pedal holds released notes", "[synthimi][cordito]")
@@ -1190,36 +1196,6 @@ TEST_CASE("Cordito: pressure glides from one MIDI value to the next", "[synthimi
   CHECK(rig.s->voice(0).pressure > 0.99);
 }
 
-TEST_CASE("Cordito: every engine plays in tune at its default controls, at every rate",
-          "[synthimi][cordito]")
-{
-  // The other tests simplify the controls (no stiffness, no detune): at the
-  // defaults, the bow at 48 kHz sounded around the octave, its fundamental
-  // gone, as the stretch of the stiff string pushed it off
-  for(double fs : {44100., 48000., 96000.})
-    for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
-      for(int note : {48, 60, 72})
-      {
-        Params p;
-        p.engine = e;
-        p.exciter = resolveExciter(e, Exciter::Bow);
-        p.sanitize();
-        Rig rig{fs};
-        rig.on(note, 100, p);
-        const auto l = rig.run(1.6, p);
-        const double f0 = midiToHz(note);
-        const double h1 = goertzel(l, rig.fs, f0, 0.8, 1.6), h2 = goertzel(l, rig.fs, 2. * f0, 0.8, 1.6);
-        const double c = cents(peakNear(l, rig.fs, f0, 0.05 * f0, 0.8, 1.6), f0);
-        INFO("fs " << fs << " engine " << int(e) << " note " << note << ": H2/H1 "
-                   << 20. * std::log10(h2 / h1) << " dB, " << c << " cents");
-        // A bow that fell into another regime sounds its octave; a pluck or a
-        // strike near the bridge just excites its second partial more
-        if(bowed(e))
-          CHECK(h1 > h2);
-        CHECK(std::abs(c) < 10.);
-      }
-}
-
 TEST_CASE("Cordito: the middle of Force is a Helmholtz motion, Bow Speed its loudness",
           "[synthimi][cordito]")
 {
@@ -1253,6 +1229,184 @@ TEST_CASE("Cordito: the middle of Force is a Helmholtz motion, Bow Speed its lou
                        << level[1] << " dB at 0.9");
       CHECK(level[1] > level[0] + 6.);
     }
+}
+
+namespace
+{
+//! A bowed note, held: a tone steady enough to measure what an LFO does to it
+Params steadyBow()
+{
+  Params p = plain(Engine::Bow);
+  p.decay = 8.;
+  p.noise = 0.;
+  p.velForce = 0.;
+  return p;
+}
+
+//! The pitch, in cents from f0, every `hop` seconds over [t0, t1]
+std::vector<double> pitchTrack(const std::vector<double>& x, double fs, double f0, double t0,
+                               double t1, double hop)
+{
+  std::vector<double> c;
+  for(double t = t0; t + 0.04 <= t1; t += hop)
+    c.push_back(cents(peakNear(x, fs, f0, 0.1 * f0, t, t + 0.04), f0));
+  return c;
+}
+}
+
+TEST_CASE("Cordito: LFOs that move nothing change nothing", "[synthimi][cordito]")
+{
+  // Their settings with every target Off, against no LFO at all: the same
+  // output, sample for sample, whatever the engine
+  for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
+  {
+    Params a = plain(e);
+    Params b = a;
+    for(auto& l : b.lfos)
+      l = {LfoTarget::Off, LfoShape::Random, 0.05, 1., 0.};
+    Rig ra, rb;
+    ra.on(55, 100, a);
+    rb.on(55, 100, b);
+    const auto la = ra.run(0.5, a), lb = rb.run(0.5, b);
+    INFO("engine " << int(e));
+    CHECK(la == lb);
+  }
+}
+
+TEST_CASE("Cordito: an LFO on Pitch is a vibrato that waits its Delay, each note", "[synthimi][cordito]")
+{
+  // Depth 0.5 on Pitch: half a semitone either way
+  Params p = steadyBow();
+  p.lfos[0] = {LfoTarget::Pitch, LfoShape::Sine, 0.25, 0.5, 0.};
+  Rig rig;
+  rig.on(60, 100, p);
+  const auto l = rig.run(2., p);
+  const double f0 = midiToHz(60);
+  const auto c = pitchTrack(l, rig.fs, f0, 1., 2., 0.01);
+  const auto [lo, hi] = std::minmax_element(c.begin(), c.end());
+  INFO("pitch from " << *lo << " to " << *hi << " cents");
+  CHECK(*hi - *lo > 70.);
+  CHECK(*hi - *lo < 130.);
+  // Four cycles a second: as many rising crossings of the mean
+  double mean = 0.;
+  for(double x : c)
+    mean += x / double(c.size());
+  int rising = 0;
+  for(std::size_t i = 1; i < c.size(); i++)
+    rising += c[i - 1] < mean && c[i] >= mean;
+  CHECK(rising >= 3);
+  CHECK(rising <= 5);
+
+  // With a Delay of 1 s, the first second holds still, and it rises after
+  auto still = [&](const std::vector<double>& x, double fs, double t0, double t1) {
+    const auto c = pitchTrack(x, fs, f0, t0, t1, 0.02);
+    const auto [a, b] = std::minmax_element(c.begin(), c.end());
+    return *b - *a;
+  };
+  p.lfos[0].delay = 1.;
+  Rig late;
+  late.on(60, 100, p);
+  const auto l2 = late.run(2.4, p);
+  INFO("delayed: " << still(l2, late.fs, 0.3, 0.95) << " cents in its first second, "
+                   << still(l2, late.fs, 1.6, 2.4) << " after 1.6 s");
+  CHECK(still(l2, late.fs, 0.3, 0.95) < 6.);
+  CHECK(still(l2, late.fs, 1.6, 2.4) > 70.);
+
+  // A key played again on its ringing string is a new note: its vibrato
+  // waits again (the LFOs only restarted with a fresh voice)
+  late.on(60, 100, p);
+  const auto again = late.run(1., p);
+  INFO("played again: " << still(again, late.fs, 0.3, 0.95) << " cents");
+  CHECK(still(again, late.fs, 0.3, 0.95) < 6.);
+
+  // So is each note of Mono, on its one voice
+  Params m = p;
+  m.playMode = PlayMode::Mono;
+  Rig mono;
+  mono.on(60, 100, m);
+  mono.run(2., m);
+  mono.on(62, 100, m);
+  const auto next = mono.run(1., m);
+  const double f2 = midiToHz(62);
+  const auto c2 = pitchTrack(next, mono.fs, f2, 0.3, 0.95, 0.02);
+  const auto [lo2, hi2] = std::minmax_element(c2.begin(), c2.end());
+  INFO("next Mono note: " << *hi2 - *lo2 << " cents");
+  CHECK(*hi2 - *lo2 < 6.);
+}
+
+TEST_CASE("Cordito: an LFO on Level is a tremolo that never retires the voice",
+          "[synthimi][cordito]")
+{
+  // Depth 0.5 on Level: 6 dB either way, so 12 dB from trough to peak
+  Params p = steadyBow();
+  p.lfos[0] = {LfoTarget::Level, LfoShape::Sine, 0.5, 0.5, 0.};
+  Rig rig;
+  rig.on(60, 100, p);
+  const auto l = rig.run(3., p);
+  double lo = 1e9, hi = 0.;
+  for(double t = 1.; t + 0.02 <= 3.; t += 0.01)
+  {
+    const double r = rms(l, rig.fs, t, t + 0.02);
+    lo = std::min(lo, r);
+    hi = std::max(hi, r);
+  }
+  const double swing = 20. * std::log10(hi / lo);
+  INFO("tremolo swing " << swing << " dB");
+  CHECK(swing > 9.);
+  CHECK(swing < 15.);
+
+  // Its deepest troughs, on a quiet note, are 12 dB down: still sounding
+  Params q = steadyBow();
+  q.lfos[0] = {LfoTarget::Level, LfoShape::Square, 2., 1., 0.};
+  Rig quiet;
+  quiet.on(60, 20, q);
+  quiet.run(3., q);
+  CHECK(quiet.s->activeVoices() == 1);
+}
+
+TEST_CASE("Cordito: an LFO on Pan moves the voice from side to side", "[synthimi][cordito]")
+{
+  Params p = steadyBow();
+  p.spread = 0.;
+  p.lfos[0] = {LfoTarget::Pan, LfoShape::Square, 1., 1., 0.};
+  Rig rig;
+  rig.on(60, 100, p);
+  std::vector<double> r;
+  const auto l = rig.run(2., p, &r);
+  // Square at depth 1: the first half of each second fully right, the other
+  // fully left (past the 16-sample ramps at the edges)
+  CHECK(rms(l, rig.fs, 1.1, 1.4) < 0.01 * rms(r, rig.fs, 1.1, 1.4));
+  CHECK(rms(r, rig.fs, 1.6, 1.9) < 0.01 * rms(l, rig.fs, 1.6, 1.9));
+}
+
+TEST_CASE("Cordito: every engine plays in tune at its default controls, at every rate",
+          "[synthimi][cordito]")
+{
+  // The other tests simplify the controls (no stiffness, no detune): at the
+  // defaults, the bow at 48 kHz sounded around the octave, its fundamental
+  // gone, as the stretch of the stiff string pushed it off
+  for(double fs : {44100., 48000., 96000.})
+    for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
+      for(int note : {48, 60, 72})
+      {
+        Params p;
+        p.engine = e;
+        p.exciter = resolveExciter(e, Exciter::Bow);
+        p.sanitize();
+        Rig rig{fs};
+        rig.on(note, 100, p);
+        const auto l = rig.run(1.6, p);
+        const double f0 = midiToHz(note);
+        const double h1 = goertzel(l, rig.fs, f0, 0.8, 1.6), h2 = goertzel(l, rig.fs, 2. * f0, 0.8, 1.6);
+        const double c = cents(peakNear(l, rig.fs, f0, 0.05 * f0, 0.8, 1.6), f0);
+        INFO("fs " << fs << " engine " << int(e) << " note " << note << ": H2/H1 "
+                   << 20. * std::log10(h2 / h1) << " dB, " << c << " cents");
+        // A bow that fell into another regime sounds its octave; a pluck or a
+        // strike near the bridge just excites its second partial more
+        if(bowed(e))
+          CHECK(h1 > h2);
+        CHECK(std::abs(c) < 10.);
+      }
 }
 
 TEST_CASE("Cordito: the exciters sound alike at every sample rate", "[synthimi][cordito]")
@@ -1351,6 +1505,22 @@ TEST_CASE("Cordito: any port value, any MIDI: finite, bounded, no allocation", "
       in.symp_root.value = int(rng.next() % 100);
       in.voices.value = int(rng.next() % 20) - 2;
       in.bend_range.value = int(rng.next() % 60);
+      for(auto [target, shape, period, depth, delay] :
+          {std::tuple{&in.lfo1_target.value, &in.lfo1_shape.value, &in.lfo1_period.value,
+                      &in.lfo1_depth.value, &in.lfo1_delay.value},
+           std::tuple{&in.lfo2_target.value, &in.lfo2_shape.value, &in.lfo2_period.value,
+                      &in.lfo2_depth.value, &in.lfo2_delay.value},
+           std::tuple{&in.lfo3_target.value, &in.lfo3_shape.value, &in.lfo3_period.value,
+                      &in.lfo3_depth.value, &in.lfo3_delay.value},
+           std::tuple{&in.lfo4_target.value, &in.lfo4_shape.value, &in.lfo4_period.value,
+                      &in.lfo4_depth.value, &in.lfo4_delay.value}})
+      {
+        *target = LfoTarget(int(rng.next() % 10));
+        *shape = LfoShape(int(rng.next() % 7));
+        *period = wild(0.025, 20.);
+        *depth = wild(0., 1.);
+        *delay = wild(0., 4.);
+      }
       for(auto* f :
           {&in.hardness.value, &in.position.value, &in.force.value, &in.noise.value,
            &in.brightness.value, &in.stiffness.value, &in.tension.value, &in.material.value,

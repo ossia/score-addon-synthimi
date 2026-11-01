@@ -94,6 +94,7 @@ avnd_score_plugin_add(
     Cordito/Dsp/Common.hpp
     Cordito/Dsp/Exciters.hpp
     Cordito/Dsp/Filters.hpp
+    Cordito/Dsp/Lfo.hpp
     Cordito/Dsp/Modal.hpp
     Cordito/Dsp/Sympathetic.hpp
     Cordito/Dsp/Waveguide.hpp
@@ -284,7 +285,7 @@ if(SCORE_TESTING AND COMMAND score_add_test)
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${SCORE_ROOT_SOURCE_DIR}/tests/fixtures")
 
-  # Cordito through score's execution: controls, MIDI in, audio out
+  # Cordito through score's execution: presets, controls, MIDI in, audio out
   score_add_test(score_addon_synthimi_cordito_exec_test
     SOURCES tests/CorditoExecTest.cpp
     APP

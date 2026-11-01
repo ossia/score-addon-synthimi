@@ -39,7 +39,7 @@ namespace
 constexpr auto kUuid = "3c8e5f1a-9d27-4b6e-a0c4-7f2d18e95b36";
 
 // The preset format stores values by port index: this is the frozen order
-constexpr std::array<std::string_view, 40> kPorts{
+constexpr std::array<std::string_view, 60> kPorts{
     "Input",        "Exciter",      "Hardness",    "Position",   "Force",
     "Noise",        "Engine",       "Tune",        "Fine",       "Decay",
     "Brightness",   "Stiffness",    "Tension",     "Detune",     "Material",
@@ -48,7 +48,11 @@ constexpr std::array<std::string_view, 40> kPorts{
     "Mute",         "Damper Noise", "Symp. Level", "Symp. Tuning", "Symp. Root",
     "Symp. Decay",  "Body",         "Body Size",   "Body Mix",   "Coupling",
     "Play Mode",    "Glide",        "Bend Range",  "Vel->Force", "Pressure",
-    "Spread",       "Level",        "Voices",      "Coupling Detune"};
+    "Spread",       "Level",        "Voices",      "Coupling Detune",
+    "LFO 1 Target", "LFO 1 Shape",  "LFO 1 Period", "LFO 1 Depth", "LFO 1 Delay",
+    "LFO 2 Target", "LFO 2 Shape",  "LFO 2 Period", "LFO 2 Depth", "LFO 2 Delay",
+    "LFO 3 Target", "LFO 3 Shape",  "LFO 3 Period", "LFO 3 Depth", "LFO 3 Delay",
+    "LFO 4 Target", "LFO 4 Shape",  "LFO 4 Period", "LFO 4 Depth", "LFO 4 Delay"};
 
 Process::ProcessModel* addCordito(const score::GUIApplicationContext&, score::Document& doc)
 {

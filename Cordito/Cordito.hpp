@@ -4,6 +4,7 @@
 
 #include <Cordito/CorditoDsp.hpp>
 #include <avnd/common/enum_reflection.hpp>
+#include <avnd/introspection/input.hpp>
 #include <halp/audio.hpp>
 #include <halp/controls.enums.hpp>
 #include <halp/controls.hpp>
@@ -22,6 +23,8 @@ static_assert(avnd::enum_names<SympTuning>().size() == kSympTuningCount);
 static_assert(avnd::enum_names<Body>().size() == kBodyCount);
 static_assert(avnd::enum_names<PlayMode>().size() == kPlayModeCount);
 static_assert(avnd::enum_names<Pressure>().size() == kPressureCount);
+static_assert(avnd::enum_names<LfoTarget>().size() == kLfoTargetCount);
+static_assert(avnd::enum_names<LfoShape>().size() == kLfoShapeCount);
 #endif
 
 inline constexpr halp::look small_knob{
@@ -109,6 +112,19 @@ public:
 
     // Appended: see the frozen order above
     halp::knob_f32<"Coupling Detune", halp::range{0., 1., 1.}> coupling_detune;
+
+    // Four LFOs per voice, each moving one control
+#define CORDITO_LFO_PORTS(N)                                                     \
+  halp::combobox_t<"LFO " #N " Target", LfoTarget> lfo##N##_target;              \
+  halp::combobox_t<"LFO " #N " Shape", LfoShape> lfo##N##_shape;                 \
+  halp::time_chooser<"LFO " #N " Period", halp::range{0.025, 20., 0.2}> lfo##N##_period; \
+  halp::knob_f32<"LFO " #N " Depth", halp::range{0., 1., 0.5}> lfo##N##_depth;   \
+  halp::time_chooser<"LFO " #N " Delay", halp::range{0., 4., 0.}> lfo##N##_delay;
+    CORDITO_LFO_PORTS(1)
+    CORDITO_LFO_PORTS(2)
+    CORDITO_LFO_PORTS(3)
+    CORDITO_LFO_PORTS(4)
+#undef CORDITO_LFO_PORTS
   } inputs;
 
   struct
@@ -163,6 +179,15 @@ public:
     p.level = in.level.value;
     p.voices = in.voices.value;
     p.couplingDetune = in.coupling_detune.value;
+    const auto lfo = [](const auto& target, const auto& shape, const auto& period,
+                        const auto& depth, const auto& delay) {
+      return LfoParams{target.value, shape.value, period.value, depth.value, delay.value};
+    };
+    p.lfos = {
+        lfo(in.lfo1_target, in.lfo1_shape, in.lfo1_period, in.lfo1_depth, in.lfo1_delay),
+        lfo(in.lfo2_target, in.lfo2_shape, in.lfo2_period, in.lfo2_depth, in.lfo2_delay),
+        lfo(in.lfo3_target, in.lfo3_shape, in.lfo3_period, in.lfo3_depth, in.lfo3_delay),
+        lfo(in.lfo4_target, in.lfo4_shape, in.lfo4_period, in.lfo4_depth, in.lfo4_delay)};
     p.sanitize();
     return p;
   }
@@ -209,6 +234,11 @@ public:
   using body_on = halp::enabled_when<
       &ins::body, Body::Guitar, Body::Violin, Body::Cello, Body::Harp, Body::Gourd,
       Body::Soundboard, Body::Box, Body::Metal>;
+  //! Nor an LFO's settings while it moves nothing
+  template <auto Target>
+  using lfo_on = halp::enabled_when<
+      Target, LfoTarget::Pitch, LfoTarget::Level, LfoTarget::Pan, LfoTarget::Brightness,
+      LfoTarget::Position, LfoTarget::BowSpeed, LfoTarget::Force, LfoTarget::Buzz>;
 
   // As Deuterium: what defines the instrument always in view, the rest in
   // tabs of one or two rows each.
@@ -286,7 +316,8 @@ public:
       halp_meta(background, halp::colors::background_dark)
 
       // How the string is set going, then the string itself: one tab of
-      // three rows, rather than one of a row and one of two
+      // three rows, as tall as the Mod tab's four, rather than one of a row
+      // and one of two
       struct
       {
         halp_meta(name, "String")
@@ -390,7 +421,53 @@ public:
         halp::item<&ins::damper_noise, small_knob_as("Thump")> damper_noise;
         halp::item<&ins::spread, small_knob> spread;
       } play;
+
+      // One row per LFO: what it moves, then how; the rest is greyed out
+      // while it moves nothing
+      struct
+      {
+        halp_meta(name, "Mod")
+        halp_meta(layout, halp::layouts::grid)
+        halp_meta(columns, 5)
+#define CORDITO_LFO_ROW(N)                                                       \
+  halp::item<&ins::lfo##N##_target, halp::label_as("LFO " #N)> target##N;        \
+  struct                                                                        \
+  {                                                                             \
+    halp_meta(layout, halp::layouts::container)                                 \
+    static constexpr auto condition() { return lfo_on<&ins::lfo##N##_target>{}; } \
+    halp::item<&ins::lfo##N##_shape, halp::label_as("Shape")> shape;            \
+  } shape##N;                                                                   \
+  struct                                                                        \
+  {                                                                             \
+    halp_meta(layout, halp::layouts::container)                                 \
+    static constexpr auto condition() { return lfo_on<&ins::lfo##N##_target>{}; } \
+    halp::item<&ins::lfo##N##_period, small_knob_as("Period")> period;          \
+  } period##N;                                                                  \
+  struct                                                                        \
+  {                                                                             \
+    halp_meta(layout, halp::layouts::container)                                 \
+    static constexpr auto condition() { return lfo_on<&ins::lfo##N##_target>{}; } \
+    halp::item<&ins::lfo##N##_depth, small_knob_as("Depth")> depth;             \
+  } depth##N;                                                                   \
+  struct                                                                        \
+  {                                                                             \
+    halp_meta(layout, halp::layouts::container)                                 \
+    static constexpr auto condition() { return lfo_on<&ins::lfo##N##_target>{}; } \
+    halp::item<&ins::lfo##N##_delay, small_knob_as("Delay")> delay;             \
+  } delay##N;
+        CORDITO_LFO_ROW(1)
+        CORDITO_LFO_ROW(2)
+        CORDITO_LFO_ROW(3)
+        CORDITO_LFO_ROW(4)
+#undef CORDITO_LFO_ROW
+      } mod;
     } tabs;
   };
 };
+
+//! The controls a preset stores: every one, so that loading it leaves
+//! nothing of the previous preset behind (score sets only the controls a
+//! preset holds)
+inline constexpr int kPresetPorts = 59;
+static_assert(avnd::parameter_input_introspection<Cordito>::size == kPresetPorts);
 }

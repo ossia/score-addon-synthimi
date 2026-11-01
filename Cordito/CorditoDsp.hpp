@@ -45,6 +45,7 @@
 #include <Cordito/Dsp/Exciters.hpp>
 #include <Cordito/Dsp/Waveguide.hpp>
 #include <Cordito/Dsp/Modal.hpp>
+#include <Cordito/Dsp/Lfo.hpp>
 #include <Cordito/Dsp/Sympathetic.hpp>
 
 #include <ossia/detail/algorithms.hpp>
@@ -141,6 +142,14 @@ struct Voice
   int pendingNote = 0, pendingChannel = 0;
   double pendingVelocity = 0.;
   std::uint64_t pendingStamp = 0;
+
+  // LFOs: each restarted with the note; what they add to each target (in the
+  // target's units), ramped per sample for the targets read per sample
+  std::array<Lfo, kLfos> lfo{};
+  double lfoTime = 0.; // seconds since the note started, for their delays
+  std::array<double, kLfoTargetCount> mod{}, modStep{};
+  bool modulated = false;
+  [[nodiscard]] double modOf(LfoTarget t) const noexcept { return mod[std::size_t(t)]; }
 
   //! The note to start once this voice has faded out; the newest wins
   void queue(int note, int ch, double vel, std::uint64_t stamp) noexcept
@@ -411,6 +420,13 @@ private:
   static constexpr double kPressureTime = 0.01; //!< MIDI pressure
   static constexpr double kLimiterTime = 0.1;   //!< the output limiter's release
 
+  // What an LFO at depth 1 moves its target by. Pitch: one semitone.
+  static constexpr double kLfoLevelOctaves = 2.; //!< ±12 dB
+  static constexpr double kLfoBrightness = 0.5;
+  static constexpr double kLfoPosition = 0.25;
+  static constexpr double kLfoForce = 0.5;
+  static constexpr double kLfoBuzz = 0.5;
+
   //! The RMS level of the string an E-Bow holds it at, and its pickup's Q
   static constexpr double kEbowTarget = 0.12;
   static constexpr double kEbowAsym = 0.3;
@@ -438,6 +454,8 @@ private:
   double spreadSm = -1., bodyMixSm = -1., sympLevelSm = -1.;
   int ctrlCount = 0;
   std::uint64_t stampCounter = 0;
+  //! Notes played, for the seeds of their LFOs
+  std::uint64_t noteCount = 0;
   Rng rng;
   bool prepared = false;
   //! Held notes in Mono and Legato, last on top: in place, never allocated
@@ -680,13 +698,22 @@ private:
   {
     v.velocity = vel;
     v.age = 0;
+    // Every note restarts its LFOs and their delays: a key played again on
+    // a ringing string and each note of Mono too. Only a Legato slide, which
+    // does not come here, keeps them going. Seeded from a count of the
+    // notes, not from the synth's generator: drawing from it would change
+    // every note's random variance, LFOs on or off.
+    ++noteCount;
+    for(std::size_t i = 0; i < v.lfo.size(); i++)
+      v.lfo[i].start(std::uint32_t(noteCount * 2654435761u + i * 40503u));
+    v.lfoTime = 0.;
     const auto& cs = channels[std::size_t(v.channel)];
 
     // A little variance per note, as hands have: the attack of every note of
     // a string model being identical is a common complaint.
     v.position = std::clamp(
         p.position * (1. + 0.04 * rng.bipolar())
-            + (cs.hasTimbre ? (cs.timbre - 0.5) * 0.3 : 0.),
+            + (cs.hasTimbre ? (cs.timbre - 0.5) * 0.3 : 0.) + kLfoPosition * v.modOf(LfoTarget::Position),
         0.02, 0.5);
     const double hard = std::clamp(p.hardness + 0.04 * rng.bipolar(), 0., 1.);
     if(fresh)
@@ -696,7 +723,9 @@ private:
       v.split[1] = std::sin(angle);
     }
 
-    const double force = p.force * (1. - p.velForce + p.velForce * vel);
+    const double force = std::clamp(
+        p.force * (1. - p.velForce + p.velForce * vel) + kLfoForce * v.modOf(LfoTarget::Force), 0.,
+        1.);
     // As voicePitch() bounds it
     const double f0 = std::clamp(midiToHz(v.pitch + p.tune), kMinF0, fs / 10.);
     const double period = fs / f0;
@@ -933,6 +962,7 @@ private:
     double mute = p.mute;
     if(hasPress && dest == Pressure::Brightness)
       bright += 0.5 * press;
+    bright += kLfoBrightness * v.modOf(LfoTarget::Brightness);
     if(hasPress && dest == Pressure::Mute)
       mute = std::max(mute, press);
     bright -= 0.5 * mute;
@@ -961,11 +991,65 @@ private:
     // Tension modulation, as a transient only: a hard pluck starts sharp and
     // settles to the pitch it is tuned to.
     st += 1.5 * p.tension * v.kick;
+    st += v.modOf(LfoTarget::Pitch);
     return std::clamp(midiToHz(st), kMinF0, fs / 10.);
+  }
+
+  //! Advances a voice's LFOs by one control period and sets what they add
+  //! to each target: directly for those read at the control rate, as a
+  //! ramp for those read per sample (stepped every 16 samples, a tremolo or
+  //! a bow speed would click)
+  void modulate(Voice& v, const Params& p) noexcept
+  {
+    std::array<double, kLfoTargetCount> target{};
+    bool active = false;
+    for(int i = 0; i < kLfos; i++)
+    {
+      const auto& l = p.lfos[std::size_t(i)];
+      if(l.target == LfoTarget::Off || l.depth <= 0.)
+        continue;
+      active = true;
+      // Still for its Delay, then rising over half of it, from the start of
+      // its cycle: a vibrato that arrives once the note has spoken
+      if(v.lfoTime < l.delay)
+        continue;
+      const double fade
+          = l.delay > 0. ? std::min(1., (v.lfoTime - l.delay) / (0.5 * l.delay)) : 1.;
+      target[std::size_t(l.target)]
+          += l.depth * fade * v.lfo[std::size_t(i)].tick(l.shape, kCtrl / (l.period * fs));
+    }
+    v.lfoTime += kCtrl / fs;
+    if(!active && !v.modulated)
+      return;
+    // Brightness in steps of 1/64: each step redesigns the loop's filters
+    auto& b = target[std::size_t(LfoTarget::Brightness)];
+    b = std::round(b * 64.) / 64.;
+    bool moving = active;
+    for(std::size_t t = 0; t < target.size(); t++)
+    {
+      switch(LfoTarget(t))
+      {
+        case LfoTarget::Level:
+        case LfoTarget::Pan:
+        case LfoTarget::BowSpeed:
+        case LfoTarget::Force:
+        case LfoTarget::Buzz:
+          v.modStep[t] = (target[t] - v.mod[t]) / kCtrl;
+          break;
+        default:
+          v.mod[t] = target[t];
+          v.modStep[t] = 0.;
+          break;
+      }
+      moving = moving || v.mod[t] != 0. || v.modStep[t] != 0.;
+    }
+    // All off: once the ramps are back at 0, nothing to do per sample
+    v.modulated = moving;
   }
 
   void controlVoice(Voice& v, const Params& p) noexcept
   {
+    modulate(v, p);
     // Glide, only in Mono and Legato
     if(p.playMode != PlayMode::Poly && p.glide > 0.)
     {
@@ -1024,7 +1108,9 @@ private:
     {
       // The bow can move along the string while it plays
       beta = std::clamp(
-          p.position + (cs.hasTimbre ? (cs.timbre - 0.5) * 0.3 : 0.), 0.02, 0.5);
+          p.position + (cs.hasTimbre ? (cs.timbre - 0.5) * 0.3 : 0.)
+              + kLfoPosition * v.modOf(LfoTarget::Position),
+          0.02, 0.5);
       v.position = std::abs(beta - v.position) > 1e-5 ? v.position + 0.2 * (beta - v.position)
                                                       : beta;
       beta = v.position;
@@ -1356,6 +1442,9 @@ private:
   void tickVoice(Voice& v, const Params& p, double& outL, double& outR) noexcept
   {
     v.pressure += pressCoef * (rawPressure(v) - v.pressure);
+    if(v.modulated)
+      for(std::size_t t = 0; t < v.mod.size(); t++)
+        v.mod[t] += v.modStep[t];
     double l = 0., r = 0.;
     if(v.engine == Engine::Struck)
       tickModal(v, l, r);
@@ -1401,6 +1490,22 @@ private:
       return;
     }
 
+    // After the level follower: a tremolo's troughs must not retire a voice
+    if(v.modulated)
+    {
+      if(const double lv = v.modOf(LfoTarget::Level); lv != 0.)
+      {
+        const double g = std::exp2(kLfoLevelOctaves * lv);
+        l *= g;
+        r *= g;
+      }
+      if(const double pan = std::clamp(v.modOf(LfoTarget::Pan), -1., 1.); pan != 0.)
+      {
+        l *= std::min(1., 1. - pan);
+        r *= std::min(1., 1. + pan);
+      }
+    }
+
     outL += l;
     outR += r;
   }
@@ -1431,8 +1536,11 @@ private:
       double press = 0.;
       const bool hasPress = pressureOf(v, press);
       const Pressure dest = pressureDestination(v, p);
-      double speed = p.bowSpeed;
-      double force = p.force * (1. - p.velForce + p.velForce * v.velocity);
+      double speed = p.bowSpeed * std::max(0., 1. + v.modOf(LfoTarget::BowSpeed));
+      double force = std::clamp(
+          p.force * (1. - p.velForce + p.velForce * v.velocity)
+              + kLfoForce * v.modOf(LfoTarget::Force),
+          0., 1.);
       if(hasPress && dest == Pressure::BowSpeed)
         speed *= 0.2 + 1.6 * press;
       if(hasPress && dest == Pressure::Force)
@@ -1475,7 +1583,9 @@ private:
       }
     }
 
-    const double buzz = v.engine == Engine::Buzz ? p.buzz : 0.;
+    const double buzz = v.engine == Engine::Buzz
+                            ? std::clamp(p.buzz + kLfoBuzz * v.modOf(LfoTarget::Buzz), 0., 1.)
+                            : 0.;
     const int npol = v.twoPols ? 2 : 1;
     double out[2]{0., 0.};
     for(int k = 0; k < npol; k++)
