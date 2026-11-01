@@ -104,14 +104,15 @@ artists. The BPM values are suggestions; the presets do not install rhythms.
 ## Cordito string synthesizer
 
 Cordito is a polyphonic physical model of strings: 16 voices, 39 controls, and
-four engines selected by **Engine**:
+five engines selected by **Engine**:
 
 | Engine | Model | Exciters |
 | --- | --- | --- |
 | Pluck | Digital waveguide: two delay lines meeting at the excitation point, a loss filter and up to four dispersion allpasses at the bridge | Pick, Finger, Hammer, Burst |
 | Struck | Up to 48 partials of a stiff string per course (two courses with Detune), struck by a Hunt-Crossley felt hammer | Hammer, Mallet, Pick, Burst |
-| Bow | The same waveguide with a friction junction at the bow point; Force is the bow pressure, Bow Speed, Bow Attack and Bow Lift its motion | Bow, E-Bow |
+| Bow | The same waveguide with a friction junction at the bow point: STK's bow table | Bow, E-Bow |
 | Buzz | Pluck with a lossless, amplitude-dependent bridge: the string buzzes against a curved bridge | Pick, Finger, Burst |
+| Friction | Bow with a physical friction law: hyperbolic friction, solved exactly, sticking and sliding | Bow, E-Bow |
 
 An exciter the engine does not have falls back to the engine's default, so a
 preset never goes silent because of a combination.
@@ -132,6 +133,22 @@ moves energy up the spectrum and takes none, and the string, which loses its
 upper partials sooner, ends up quieter than without it. **Bow Lift** is the
 time the bow takes to leave the string after note-off: its speed and its grip
 both fade over it.
+
+**Friction** bows with a physical friction law (Smith and Woodhouse's hyperbolic
+friction, as SuperCollider's DWGBowed solves it): the bow carries the string
+until it can no longer hold it, then lets it slide. **Bow Speed** sets the
+loudness. **Force** is mapped through Schelleng's window for the bow's speed
+and position, so its middle is the regular stick-slip (Helmholtz) motion
+wherever the bow is: lower, a light, airy surface sound, or the string
+sounding its octave close to the bridge; at the top, a raucous crunch.
+**Hardness** is the rosin and the hair: how sharply friction falls as the
+string slides, and how much the bow rounds the corner of each slip, from
+smooth to gritty. Heavy bowing flattens a note by a few cents, as on a real
+string.
+**Bow** keeps STK's bow table: Force is its pressure, Hardness its rosin,
+and Bow Speed changes the timbre more than the loudness. It is cleaner,
+often more than a real bow; Friction is livelier and noisier, and its
+Force window is narrower close to the bridge.
 
 **Decay** is the T60 at the fundamental, independent of pitch;
 **Brightness** sets how much sooner the upper partials die; **Material**
@@ -181,8 +198,10 @@ The tuning compensates the exact phase delay of every filter in the loop
 where the partials are, weighted as a plucked string's are: Pluck, Struck
 and Buzz are within 1.5 cent from 44.1 to 96 kHz over C2-C7, at any
 Brightness. A bowed note's pitch also depends on how much sooner its upper
-partials die, as a real one's does: exact at Brightness 1, up to 8 cents
-sharp at C2 in between.
+partials die and on the bow's force, as a real one's does: Bow is up to 8
+cents sharp at C2 at mid Brightness; Friction, in its regular stick-slip
+motion, within 3 cents in half the cases and 8 cents in all, across notes,
+bow positions, speeds and forces.
 
 **Decay** holds at any Brightness: the loss filter is a shelf whose gain at
 the fundamental is set first, darkness coming second, so the darkest settings
@@ -193,7 +212,7 @@ frequencies is taken into account.
 
 ### Cordito presets
 
-The default package's `Presets/Cordito` collection holds 59 presets, dry apart
+The default package's `Presets/Cordito` collection holds 65 presets, dry apart
 from their body. Levels are matched by measurement.
 
 | Category | Presets |
@@ -216,6 +235,12 @@ A second, less literal batch:
 | Ambient | Wind Field, Frozen Lake, Ghost Strings, Breath Bloom |
 | Percussive | Gourd Snap, Inside the Frame, Tine Wire, Dry Pinch |
 | Experimental | Broken Engine, Sympathetic Storm, Spring Tank Pluck, Moth Wings, Tape Warp Buzz, Underwater Hammers |
+
+For the Friction engine, voiced for it:
+
+| Category | Presets |
+| --- | --- |
+| Friction | Rosin Bloom, Over the Fingerboard, Grain Wire, Pressure Line (channel pressure is the bow's force), Bow Crunch, Halo Strings |
 
 Presets store their values by port index: Cordito's ports must only ever be
 appended to, and its enumerations (Engine, Exciter, Symp. Tuning, Body,

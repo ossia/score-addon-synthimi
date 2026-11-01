@@ -192,7 +192,8 @@ TEST_CASE("Cordito: every engine, chosen from its control, plays in tune", "[syn
 {
   withCordito([](const score::GUIApplicationContext&, Process::ProcessModel& proc, Running& r) {
     const double f0 = 440. * std::exp2((60 - 69) / 12.);
-    for(auto e : {crd::Engine::Pluck, crd::Engine::Struck, crd::Engine::Bow, crd::Engine::Buzz})
+    for(auto e : {crd::Engine::Pluck, crd::Engine::Struck, crd::Engine::Bow, crd::Engine::Buzz,
+                  crd::Engine::Friction})
     {
       control(proc, "Engine").setValue(int(e));
       r.run(0.01);
