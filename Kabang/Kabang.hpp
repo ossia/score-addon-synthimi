@@ -25,6 +25,19 @@ struct log_pot : halp::knob_f32<lit, setup>
   using mapper = halp::log_mapper<std::ratio<85, 100>>;
 };
 
+//! A channel's pitch envelope depth. It is an input of the processor, after
+//! all its channels, not of the DrumChannel: a control added inside the
+//! channels would shift the port ids of every later one, and saved cables and
+//! presets refer to ports by id.
+struct pitch_env_amount
+    : halp::knob_f32<"Pitch Env Amount (st)", halp::range{-24., 24., 24.}>
+{
+  halp_meta(
+      description,
+      "Signed envelope depth in semitones. Positive falls to the base pitch; "
+      "negative rises to it with a fast attack.")
+};
+
 struct DrumChannel
 {
   halp_flag(recursive_group);
@@ -42,10 +55,10 @@ struct DrumChannel
   halp::knob_f32<"LP Reso", halp::range{0.001, 1., 0.5}> lp_res;
 
   halp::toggle<"P. Env"> pitch_env_enable;
-  halp::time_chooser<"P. Attack", halp::range{0.0001, 1., 0.01}> pitch_attack;
+  halp::time_chooser<"P. Attack", halp::range{0.0001, 1., 0.0001}> pitch_attack;
   halp::time_chooser<"P. Decay", halp::range{0.0001, 1., 0.05}> pitch_decay;
-  halp::knob_f32<"P. Sustain", halp::range{0., 1., 1.}> pitch_sustain;
-  halp::time_chooser<"P. Release", halp::range{0.0001, 10., 0.25}> pitch_release;
+  halp::knob_f32<"P. Sustain", halp::range{0., 1., 0.}> pitch_sustain;
+  halp::time_chooser<"P. Release", halp::range{0.0001, 10., 0.05}> pitch_release;
   halp::knob_f32<"Vel->Pitch", halp::range{-1., 1., 0.}> pitch_envelop;
 
   halp::toggle<"F. Env"> filt_env_enable;
@@ -68,20 +81,22 @@ struct DrumChannel
 
   void run(int frames, int channels, double** out, double volume);
 
+  // Strip cell: play button, sample name as title
+  struct summary
+  {
+    struct
+    {
+      halp_meta(layout, halp::layouts::hbox)
+      halp::custom_actions_item<Synthimi::PlayButton> play;
+      halp::display<&DrumChannel::sample, halp::display_style::title> sample;
+    } row;
+  };
+
+  //! The channel's page; PitchAmount is its pitch_env_amount in the processor
+  template <auto PitchAmount>
   struct ui
   {
     halp_meta(layout, halp::layouts::vbox)
-
-    // Strip cell: play button, sample name as title
-    struct summary
-    {
-      struct
-      {
-        halp_meta(layout, halp::layouts::hbox)
-        halp::custom_actions_item<Synthimi::PlayButton> play;
-        halp::display<&DrumChannel::sample, halp::display_style::title> sample;
-      } row;
-    };
 
     struct
     {
@@ -97,7 +112,7 @@ struct DrumChannel
       halp_meta(columns, 6)
 
       halp::item<&DrumChannel::pitch> pitch;
-      halp::label label;
+      halp::item<PitchAmount> pitch_amount;
       halp::item<&DrumChannel::hp_cutoff> hp_cutoff;
       halp::item<&DrumChannel::hp_res> hp_res;
       halp::item<&DrumChannel::lp_cutoff> lp_cutoff;
@@ -152,6 +167,15 @@ public:
     DrumChannel s7;
     DrumChannel s8;
 
+    // After the channels: see pitch_env_amount
+    pitch_env_amount pitch_amount_1;
+    pitch_env_amount pitch_amount_2;
+    pitch_env_amount pitch_amount_3;
+    pitch_env_amount pitch_amount_4;
+    pitch_env_amount pitch_amount_5;
+    pitch_env_amount pitch_amount_6;
+    pitch_env_amount pitch_amount_7;
+    pitch_env_amount pitch_amount_8;
   } inputs;
 
   struct
@@ -170,6 +194,19 @@ public:
     f(inputs.s6);
     f(inputs.s7);
     f(inputs.s8);
+  }
+
+  //! Each channel along with its pitch envelope amount
+  void for_each_channel_amount(auto&& f)
+  {
+    f(inputs.s1, inputs.pitch_amount_1.value);
+    f(inputs.s2, inputs.pitch_amount_2.value);
+    f(inputs.s3, inputs.pitch_amount_3.value);
+    f(inputs.s4, inputs.pitch_amount_4.value);
+    f(inputs.s5, inputs.pitch_amount_5.value);
+    f(inputs.s6, inputs.pitch_amount_6.value);
+    f(inputs.s7, inputs.pitch_amount_7.value);
+    f(inputs.s8, inputs.pitch_amount_8.value);
   }
 
   struct play_drum
@@ -200,46 +237,46 @@ public:
       halp_meta(layout, halp::layouts::strip_detail)
       halp_meta(background, halp::colors::background_darker)
 
-      struct : halp::recursive_group_item<&ins::s1, DrumChannel::ui>
+      struct : halp::recursive_group_item<&ins::s1, DrumChannel::ui<&ins::pitch_amount_1>>
       {
         halp_meta(name, "Drum 1")
-        DrumChannel::ui::summary summary;
+        DrumChannel::summary summary;
       } s1;
-      struct : halp::recursive_group_item<&ins::s2, DrumChannel::ui>
+      struct : halp::recursive_group_item<&ins::s2, DrumChannel::ui<&ins::pitch_amount_2>>
       {
         halp_meta(name, "Drum 2")
-        DrumChannel::ui::summary summary;
+        DrumChannel::summary summary;
       } s2;
-      struct : halp::recursive_group_item<&ins::s3, DrumChannel::ui>
+      struct : halp::recursive_group_item<&ins::s3, DrumChannel::ui<&ins::pitch_amount_3>>
       {
         halp_meta(name, "Drum 3")
-        DrumChannel::ui::summary summary;
+        DrumChannel::summary summary;
       } s3;
-      struct : halp::recursive_group_item<&ins::s4, DrumChannel::ui>
+      struct : halp::recursive_group_item<&ins::s4, DrumChannel::ui<&ins::pitch_amount_4>>
       {
         halp_meta(name, "Drum 4")
-        DrumChannel::ui::summary summary;
+        DrumChannel::summary summary;
       } s4;
 
-      struct : halp::recursive_group_item<&ins::s5, DrumChannel::ui>
+      struct : halp::recursive_group_item<&ins::s5, DrumChannel::ui<&ins::pitch_amount_5>>
       {
         halp_meta(name, "Drum 5")
-        DrumChannel::ui::summary summary;
+        DrumChannel::summary summary;
       } s5;
-      struct : halp::recursive_group_item<&ins::s6, DrumChannel::ui>
+      struct : halp::recursive_group_item<&ins::s6, DrumChannel::ui<&ins::pitch_amount_6>>
       {
         halp_meta(name, "Drum 6")
-        DrumChannel::ui::summary summary;
+        DrumChannel::summary summary;
       } s6;
-      struct : halp::recursive_group_item<&ins::s7, DrumChannel::ui>
+      struct : halp::recursive_group_item<&ins::s7, DrumChannel::ui<&ins::pitch_amount_7>>
       {
         halp_meta(name, "Drum 7")
-        DrumChannel::ui::summary summary;
+        DrumChannel::summary summary;
       } s7;
-      struct : halp::recursive_group_item<&ins::s8, DrumChannel::ui>
+      struct : halp::recursive_group_item<&ins::s8, DrumChannel::ui<&ins::pitch_amount_8>>
       {
         halp_meta(name, "Drum 8")
-        DrumChannel::ui::summary summary;
+        DrumChannel::summary summary;
       } s8;
 
     } drum_tabs;

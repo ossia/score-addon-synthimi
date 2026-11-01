@@ -26,6 +26,8 @@ voice* DrumChannel::trigger(int ts, int vel_byte)
   v.pitch_envelope = this->pitch_env_enable;
 
   v.pitch = this->pitch;
+  // Set by the processor, which holds the amounts
+  v.pitch_amount = 0.;
   v.position = -ts;
   v.lpCutoff = this->lp_cutoff.value;
   v.lpRes = this->lp_res.value;
@@ -82,14 +84,17 @@ void Kabang::operator()(halp::tick t)
       continue;
 
     auto m = libremidi::message{{msg.bytes[0], msg.bytes[1], msg.bytes[2]}};
-    if(m.get_message_type() == libremidi::message_type::NOTE_ON)
+    if(m.get_message_type() == libremidi::message_type::NOTE_ON && msg.bytes[2] != 0)
     {
-      for_each_channel([&msg](DrumChannel& channel) {
+      for_each_channel_amount([&msg](DrumChannel& channel, float pitch_amount) {
         if(msg.bytes[1] == channel.midi_key)
-          channel.trigger(msg.timestamp, msg.bytes[2]);
+          if(auto* v = channel.trigger(msg.timestamp, msg.bytes[2]))
+            v->pitch_amount = pitch_amount;
       });
     }
-    else if(m.get_message_type() == libremidi::message_type::NOTE_OFF)
+    else if(m.get_message_type() == libremidi::message_type::NOTE_OFF
+            || (m.get_message_type() == libremidi::message_type::NOTE_ON
+                && msg.bytes[2] == 0))
     {
       for_each_channel([&msg](DrumChannel& channel) {
         if(msg.bytes[1] == channel.midi_key)
@@ -97,6 +102,7 @@ void Kabang::operator()(halp::tick t)
           for(auto& voice : channel.sample.voices)
           {
             voice->amp_adsr.release();
+            voice->pitch_adsr.release();
           }
         }
       });
@@ -107,9 +113,10 @@ void Kabang::operator()(halp::tick t)
   if(pending_plays != 0)
   {
     int i = 0;
-    for_each_channel([&](DrumChannel& channel) {
+    for_each_channel_amount([&](DrumChannel& channel, float pitch_amount) {
       if(pending_plays & (1u << i++))
-        channel.trigger(0, 100);
+        if(auto* v = channel.trigger(0, 100))
+          v->pitch_amount = pitch_amount;
     });
     pending_plays = 0;
   }
@@ -127,21 +134,24 @@ void Minibang::operator()(halp::tick t)
       continue;
 
     auto m = libremidi::message{{msg.bytes[0], msg.bytes[1], msg.bytes[2]}};
-    if(m.get_message_type() == libremidi::message_type::NOTE_ON)
+    if(m.get_message_type() == libremidi::message_type::NOTE_ON && msg.bytes[2] != 0)
     {
       const int root = this->inputs.s1.midi_key.value;
       const float pitch_ratio = root > 0 ? float(msg.bytes[1]) / root : 1.f;
-      for_each_channel([&msg, pitch_ratio](DrumChannel& channel) {
-        channel.trigger(msg.timestamp, pitch_ratio, msg.bytes[2]);
-      });
+      auto& channel = this->inputs.s1;
+      if(auto* v = channel.trigger(msg.timestamp, pitch_ratio, msg.bytes[2]))
+        v->pitch_amount = this->inputs.pitch_amount_1.value;
     }
-    else if(m.get_message_type() == libremidi::message_type::NOTE_OFF)
+    else if(m.get_message_type() == libremidi::message_type::NOTE_OFF
+            || (m.get_message_type() == libremidi::message_type::NOTE_ON
+                && msg.bytes[2] == 0))
     {
       for_each_channel([&msg](DrumChannel& channel) {
         {
           for(auto& voice : channel.sample.voices)
           {
             voice->amp_adsr.release();
+            voice->pitch_adsr.release();
           }
         }
       });

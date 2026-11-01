@@ -10,11 +10,14 @@
 #include <Process/Process.hpp>
 #include <Process/ProcessList.hpp>
 
+#include <score/model/EntitySerialization.hpp>
 #include <score/plugins/SerializableHelpers.hpp>
 #include <score/serialization/JSONVisitor.hpp>
 
 #include <core/document/Document.hpp>
 #include <core/document/DocumentModel.hpp>
+
+#include <ossia/detail/flat_set.hpp>
 
 #include <ossia/network/value/value_conversion.hpp>
 
@@ -25,7 +28,6 @@
 #include <score_test/Document.hpp>
 
 #include <memory>
-#include <set>
 
 namespace
 {
@@ -48,7 +50,8 @@ UuidKey<T> key_of(const rapidjson::Value& uuid)
 
 void check_upgrade(
     const score::GUIApplicationContext& ctx, const char* file,
-    const std::set<QString>& time_choosers, std::size_t expected_count)
+    const ossia::flat_set<QString>& time_choosers, std::size_t expected_count,
+    std::size_t added_controls)
 {
   const QByteArray bytes = fixture(file);
   REQUIRE(!bytes.isEmpty());
@@ -69,12 +72,21 @@ void check_upgrade(
 
   const auto& ports = ctx.interfaces<Process::PortFactoryList>();
   const auto& saved_inlets = json["Inlets"].GetArray();
-  REQUIRE(loaded->inlets().size() == saved_inlets.Size());
+  REQUIRE(loaded->inlets().size() == saved_inlets.Size() + added_controls);
+  // Controls added since come after the saved ones, at their defaults
+  for(std::size_t i = saved_inlets.Size(); i < loaded->inlets().size(); i++)
+  {
+    auto* amount = qobject_cast<Process::ControlInlet*>(loaded->inlets()[i]);
+    REQUIRE(amount);
+    CHECK(amount->name() == QStringLiteral("Pitch Env Amount (st)"));
+    CHECK(amount->value() == ossia::value{24.f});
+  }
 
   std::size_t upgraded = 0;
   std::size_t changed_from_default = 0;
   for(const auto& saved : saved_inlets)
   {
+    // Same id, same port: cables and presets refer to ports by id
     const auto id = Id<Process::Port>{saved["id"].GetInt()};
     auto* inlet = loaded->inlet(id);
     REQUIRE(inlet);
@@ -82,6 +94,7 @@ void check_upgrade(
       continue;
 
     const auto name = JsonValue{saved["Custom"]}.toString();
+    CHECK(inlet->name() == name);
     const ossia::value saved_value
         = JSONWriter::unmarshall<ossia::value>(saved["Value"]);
     INFO(file << ": " << name.toStdString());
@@ -119,7 +132,7 @@ TEST_CASE("Kaboom: decays saved as log knobs load as time choosers", "[synthimi]
         ctx, "kaboom-before-time-choosers.json",
         {"P. Decay", "Decay", "Shake", "FM I.Dec", "Flam Time", "N. Decay", "Attack",
          "A. Decay"},
-        64);
+        64, 0);
   });
 }
 
@@ -131,6 +144,71 @@ TEST_CASE(
         ctx, "minibang-before-time-choosers.json",
         {"P. Attack", "P. Decay", "P. Release", "F. Attack", "F. Decay", "F. Release",
          "Attack", "Decay", "Release"},
-        9);
+        9, 1);
+  });
+}
+
+TEST_CASE(
+    "Kabang: the pitch amounts come after every older port, which keep their ids",
+    "[synthimi]")
+{
+  score::test::run_in_app([](const score::GUIApplicationContext& ctx) {
+    auto& processes = ctx.interfaces<Process::ProcessFactoryList>();
+    auto* factory = processes.get(UuidKey<Process::ProcessModel>::fromString(
+        QStringLiteral("d6cd303e-c851-4655-806e-6c344cade2ae")));
+    if(!factory)
+      SKIP("Kabang is not built");
+    auto* doc = score::test::new_document(ctx);
+    REQUIRE(doc);
+    std::unique_ptr<Process::ProcessModel> original{factory->make(
+        TimeVal::fromMsecs(1000.), {}, Id<Process::ProcessModel>{0},
+        doc->context(), &doc->model())};
+    REQUIRE(original);
+
+    int channel = 0;
+    for(auto* port : original->inlets())
+      if(port->name() == QStringLiteral("Pitch"))
+      {
+        auto* control = qobject_cast<Process::ControlInlet*>(port);
+        REQUIRE(control);
+        control->setValue(0.5f + 0.1f * channel++);
+      }
+    REQUIRE(channel == 8);
+
+    JSONReader writer;
+    writer.readFrom(*original);
+    auto json = readJson(writer.toByteArray());
+    // A document saved before the amounts existed: the same ports without them.
+    // Its ids must be the ones they have today, as cables and presets use them.
+    auto& saved_inlets = json["Inlets"];
+    for(auto it = saved_inlets.Begin(); it != saved_inlets.End();)
+    {
+      if(it->HasMember("Custom")
+         && JsonValue{(*it)["Custom"]}.toString() == QStringLiteral("Pitch Env Amount (st)"))
+        it = saved_inlets.Erase(it);
+      else
+        ++it;
+    }
+    REQUIRE(saved_inlets.Size() == original->inlets().size() - 8);
+    int old_id = 0;
+    for(auto& port : saved_inlets.GetArray())
+      CHECK(port["id"].GetInt() == old_id++);
+    JSONObject::Deserializer des{json};
+    std::unique_ptr<Process::ProcessModel> loaded{
+        deserialize_interface(processes, des, doc->context(), &doc->model())};
+    REQUIRE(loaded);
+    REQUIRE(loaded->inlets().size() == original->inlets().size());
+    for(auto* port : original->inlets())
+    {
+      auto* restored = loaded->inlet(port->id());
+      REQUIRE(restored);
+      CHECK(restored->name() == port->name());
+      if(auto* control = qobject_cast<Process::ControlInlet*>(port))
+      {
+        auto* restored_control = qobject_cast<Process::ControlInlet*>(restored);
+        REQUIRE(restored_control);
+        CHECK(restored_control->value() == control->value());
+      }
+    }
   });
 }

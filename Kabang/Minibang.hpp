@@ -35,6 +35,8 @@ public:
 
     DrumChannel s1;
 
+    // After the channel: see pitch_env_amount
+    pitch_env_amount pitch_amount_1;
   } inputs;
 
   struct
@@ -54,7 +56,7 @@ public:
     halp_meta(layout, halp::layouts::hbox)
     halp_meta(background, halp::colors::background_mid)
 
-    struct : halp::recursive_group_item<&ins::s1, DrumChannel::ui>
+    struct : halp::recursive_group_item<&ins::s1, DrumChannel::ui<&ins::pitch_amount_1>>
     {
       halp_meta(name, "Drum 1")
       halp_meta(background, halp::colors::background_darker)

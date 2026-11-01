@@ -25,6 +25,7 @@ struct voice
   double filt_track{};
   double pitch_track{};
   double pitch{};
+  double pitch_amount{};
   int64_t position{};
   int64_t read_position{};
 
