@@ -87,7 +87,7 @@ public:
     halp::knob_f32<"Damper Noise", halp::range{0., 1., 0.1}> damper_noise;
 
     // Sympathetic strings
-    halp::knob_f32<"Symp. Level", halp::range{0., 1., 0.}> symp_level;
+    halp::knob_f32<"Symp. Level", halp::range{0., 4., 0.}> symp_level;
     halp::combobox_t<"Symp. Tuning", SympTuning> symp_tuning;
     halp::spinbox_i32<"Symp. Root", halp::range{24, 60, 36}> symp_root;
     halp::time_chooser<"Symp. Decay", halp::range{0.5, 30., 8.}> symp_decay;
@@ -125,6 +125,10 @@ public:
     CORDITO_LFO_PORTS(3)
     CORDITO_LFO_PORTS(4)
 #undef CORDITO_LFO_PORTS
+
+    // The mix: the played strings, and their excitation heard directly
+    halp::knob_f32<"String Level", halp::range{0., 1., 1.}> string_level;
+    halp::knob_f32<"Exciter Level", halp::range{0., 1., 0.}> exciter_level;
   } inputs;
 
   struct
@@ -179,6 +183,8 @@ public:
     p.level = in.level.value;
     p.voices = in.voices.value;
     p.couplingDetune = in.coupling_detune.value;
+    p.stringLevel = in.string_level.value;
+    p.exciterLevel = in.exciter_level.value;
     const auto lfo = [](const auto& target, const auto& shape, const auto& period,
                         const auto& depth, const auto& delay) {
       return LfoParams{target.value, shape.value, period.value, depth.value, delay.value};
@@ -301,12 +307,21 @@ public:
         } bow;
       } pages;
 
-      // Level at the right edge, whichever engine page is shown
+      // The mix at the right edge, whichever engine page is shown: the
+      // string, its excitation, the sympathetic strings, and all of them
       struct
       {
         halp_meta(layout, halp::layouts::spacing)
         static constexpr bool stretch() { return true; }
       } fill;
+      halp::item<&ins::string_level, small_knob_as("String")> string_level;
+      halp::item<&ins::exciter_level, small_knob_as("Exciter")> exciter_level;
+      struct
+      {
+        halp_meta(layout, halp::layouts::container)
+        static constexpr auto condition() { return sympathetic_on{}; }
+        halp::item<&ins::symp_level, small_knob_as("Symp.")> level;
+      } symp_level;
       halp::item<&ins::level, small_knob> level;
     } header;
 
@@ -358,15 +373,10 @@ public:
         {
           halp_meta(layout, halp::layouts::container)
           static constexpr auto condition() { return sympathetic_on{}; }
-          halp::item<&ins::symp_level, small_knob_as("Level")> level;
-        } level;
-        struct
-        {
-          halp_meta(layout, halp::layouts::container)
-          static constexpr auto condition() { return sympathetic_on{}; }
           halp::item<&ins::symp_decay, small_knob_as("Decay")> decay;
         } decay;
         halp::spacing gap{};
+        halp::spacing gap2{};
 
         halp::item<&ins::body> body;
         struct
@@ -468,6 +478,6 @@ public:
 //! The controls a preset stores: every one, so that loading it leaves
 //! nothing of the previous preset behind (score sets only the controls a
 //! preset holds)
-inline constexpr int kPresetPorts = 59;
+inline constexpr int kPresetPorts = 61;
 static_assert(avnd::parameter_input_introspection<Cordito>::size == kPresetPorts);
 }

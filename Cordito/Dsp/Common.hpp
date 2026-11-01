@@ -238,6 +238,8 @@ struct Params
   double mute = 0.;
   double damperNoise = 0.1;
 
+  //! Above 1, louder than a real instrument's: for a halo heard without its
+  //! string
   double sympLevel = 0.;
   SympTuning sympTuning = SympTuning::Off;
   int sympRoot = 36; // MIDI note
@@ -260,6 +262,12 @@ struct Params
 
   double spread = 0.5;
   double level = 1.;
+  //! The played strings in the mix. The sympathetic strings are fed before
+  //! it: at 0 they still ring.
+  double stringLevel = 1.;
+  //! The excitation heard directly: a pick's click, a hammer's thump, the
+  //! rosin of a bow
+  double exciterLevel = 0.;
   int voices = kMaxVoices;
   std::array<LfoParams, kLfos> lfos{};
 
@@ -290,7 +298,7 @@ struct Params
     release = sane(release, 0.01, kReleaseFree, 0.3);
     mute = sane(mute, 0., 1., 0.);
     damperNoise = sane(damperNoise, 0., 1., 0.1);
-    sympLevel = sane(sympLevel, 0., 1., 0.);
+    sympLevel = sane(sympLevel, 0., 4., 0.);
     sympTuning = saneEnum(sympTuning, kSympTuningCount);
     sympRoot = std::clamp(sympRoot, 24, 60);
     sympDecay = sane(sympDecay, 0.5, 30., 8.);
@@ -306,6 +314,8 @@ struct Params
     pressure = saneEnum(pressure, kPressureCount);
     spread = sane(spread, 0., 1., 0.5);
     level = sane(level, 0., 2., 1.);
+    stringLevel = sane(stringLevel, 0., 1., 1.);
+    exciterLevel = sane(exciterLevel, 0., 1., 0.);
     voices = std::clamp(voices, 1, kMaxVoices);
     for(auto& l : lfos)
     {

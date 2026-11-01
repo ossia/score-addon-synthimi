@@ -804,6 +804,89 @@ TEST_CASE("Cordito: sympathetic strings ring on after the note", "[synthimi][cor
   CHECK(rms(l, rig.fs, 0., 0.5) > 1e-4);
 }
 
+TEST_CASE("Cordito: String mixes the played strings, after the sympathetic ones", "[synthimi][cordito]")
+{
+  // Everything after the voices is linear below the limiter: the strings
+  // alone and the sympathetic strings alone add up to the two together, and
+  // String at 0 leaves the sympathetic ones exactly as they were
+  Params p = plain(Engine::Pluck);
+  p.sympLevel = 1.;
+  p.sympTuning = SympTuning::Octaves;
+  p.sympRoot = 48;
+  p.body = Body::Guitar;
+  const auto play = [](Params q) {
+    q.sanitize();
+    Rig rig;
+    rig.on(60, 70, q);
+    std::vector<double> r;
+    auto l = rig.run(1., q, &r);
+    l.insert(l.end(), r.begin(), r.end());
+    return l;
+  };
+  const auto both = play(p);
+  Params alone = p, halo = p;
+  alone.sympLevel = 0.;
+  halo.stringLevel = 0.;
+  const auto a = play(alone), h = play(halo);
+  double err = 0., energy = 0.;
+  for(std::size_t i = 0; i < both.size(); i++)
+  {
+    err = std::max(err, std::abs(both[i] - a[i] - h[i]));
+    energy += h[i] * h[i];
+  }
+  CHECK(err < 1e-9);
+  CHECK(energy > 1e-3);
+}
+
+TEST_CASE("Cordito: Exciter is the excitation heard alone", "[synthimi][cordito]")
+{
+  for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
+  {
+    INFO(int(e));
+    Params p;
+    p.engine = e;
+    p.exciter = bowed(e) ? Exciter::Bow : e == Engine::Struck ? Exciter::Hammer : Exciter::Pick;
+    p.sanitize();
+    const auto play = [](Params q, double string, double exciter) {
+      q.stringLevel = string;
+      q.exciterLevel = exciter;
+      q.sanitize();
+      Rig rig;
+      rig.on(60, 100, q);
+      std::vector<double> r;
+      auto l = rig.run(1., q, &r);
+      rig.off(60, q);
+      auto tail = rig.run(1.5, q);
+      l.insert(l.end(), tail.begin(), tail.end());
+      return l;
+    };
+    const auto str = play(p, 1., 0.), exc = play(p, 0., 1.), sum = play(p, 1., 1.);
+    // Heard as loud as the string it sets going, at middle C: by their
+    // peaks, or a bow's rosin by its level while it bows
+    const auto peak = [](const std::vector<double>& x) {
+      double m = 0.;
+      for(double y : x)
+        m = std::max(m, std::abs(y));
+      return m;
+    };
+    const double fs = 48000.;
+    const double db = bowed(e) ? 20. * std::log10(rms(exc, fs, 0.2, 1.) / rms(str, fs, 0.2, 1.))
+                               : 20. * std::log10(peak(exc) / peak(str));
+    CHECK(std::abs(db) < 2.);
+    // A pluck or a strike is a click, gone long before the string is; the
+    // rosin goes with the bow
+    CHECK(rms(exc, fs, 2., 2.5) < 1e-6);
+    if(!bowed(e))
+      CHECK(rms(exc, fs, 0.2, 1.) < 1e-6);
+    // The excitation adds to the string, and changes none of its noise: the
+    // rosin draws from a generator of its own
+    double err = 0.;
+    for(std::size_t i = 0; i < sum.size(); i++)
+      err = std::max(err, std::abs(sum[i] - str[i] - exc[i]));
+    CHECK(err < 1e-9);
+  }
+}
+
 TEST_CASE("Cordito: sympathetic strings resonate, they do not amplify", "[synthimi][cordito]")
 {
   // A string in unison with a played note gains 1 / (1 - g): hundreds with a
@@ -1525,12 +1608,14 @@ TEST_CASE("Cordito: any port value, any MIDI: finite, bounded, no allocation", "
           {&in.hardness.value, &in.position.value, &in.force.value, &in.noise.value,
            &in.brightness.value, &in.stiffness.value, &in.tension.value, &in.material.value,
            &in.buzz.value, &in.bow_speed.value, &in.mute.value, &in.damper_noise.value,
-           &in.symp_level.value, &in.body_mix.value, &in.coupling.value, &in.vel_force.value,
-           &in.spread.value, &in.coupling_detune.value})
+           &in.body_mix.value, &in.coupling.value, &in.vel_force.value,
+           &in.spread.value, &in.coupling_detune.value, &in.string_level.value,
+           &in.exciter_level.value})
         *f = wild(0., 1.);
       in.tune.value = wild(-24., 24.);
       in.fine.value = wild(-100., 100.);
       in.detune.value = wild(0., 25.);
+      in.symp_level.value = wild(0., 4.);
       in.body_size.value = wild(0.5, 2.);
       in.level.value = wild(0., 2.);
       in.decay.value = wild(0.05, 30.);
