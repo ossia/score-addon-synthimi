@@ -103,7 +103,7 @@ artists. The BPM values are suggestions; the presets do not install rhythms.
 
 ## Cordito string synthesizer
 
-Cordito is a polyphonic physical model of strings: 16 voices, 59 controls, and
+Cordito is a polyphonic physical model of strings: 16 voices, 61 controls, and
 five engines selected by **Engine**:
 
 | Engine | Model | Exciters |
@@ -179,6 +179,20 @@ leaves it and lets every other harmonic move: near a body mode, a detuned,
 inharmonic pull. At 0, each partial is pulled only by the body's loading where
 it is, as on a real instrument; between, the pull is between the two.
 
+The header mixes what is heard: **String**, **Exciter**, **Symp. Level**
+and **Level**, for everything. String is the played strings; the
+sympathetic strings are driven before it, so at 0 they still ring, as the
+bridge of a string muted at the pickup still shakes. Exciter is the
+excitation heard directly: the click of a pick or a finger, the knock of a
+hammer or a mallet, a burst's noise, and the rosin of a bow, as loud as the
+bow is fast and pressed. At 1, a click peaks about as high as the string it
+plays, at middle C, and the rosin is as loud as the bowed string; an E-Bow
+touches nothing and is barely heard. String 0 and Exciter up, with the
+sympathetic strings and a body, is the attack and the halo it sets ringing
+without the note. Symp. Level goes to 4, 12 dB louder than a real
+instrument's, for a halo heard on its own. At String 1 and Exciter 0, the
+defaults, Cordito sounds exactly as without them.
+
 Four **LFOs** run in every voice, restarted with each note: a key played
 again on a ringing string and each note of Mono too, but not a Legato slide.
 Each moves one control (its **Target**), with a **Shape** (sine, triangle,
@@ -230,7 +244,7 @@ frequencies is taken into account.
 
 ### Cordito presets
 
-The default package's `Presets/Cordito` collection holds 75 presets, dry apart
+The default package's `Presets/Cordito` collection holds 80 presets, dry apart
 from their body. Levels are matched by measurement.
 
 | Category | Presets |
@@ -265,6 +279,12 @@ For the LFOs:
 | Category | Presets |
 | --- | --- |
 | Motion | Late Vibrato, Pulse Harp, Drifting Rosin, Rotating Felt, Breathing Wire, Throbbing Bridge, Slow Signal, Scattered Glass, Bow Stutter, Tide Drone |
+
+For String and Exciter: the excitation and the halo, the string low or gone.
+
+| Category | Presets |
+| --- | --- |
+| Halo | Empty Courses, Under the Lid, Rosin Ghost, Knock and Halo, Pick Forward |
 
 Presets store their values by port index: Cordito's ports must only ever be
 appended to, and its enumerations (Engine, Exciter, Symp. Tuning, Body,

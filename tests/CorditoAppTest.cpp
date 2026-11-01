@@ -39,7 +39,7 @@ namespace
 constexpr auto kUuid = "3c8e5f1a-9d27-4b6e-a0c4-7f2d18e95b36";
 
 // The preset format stores values by port index: this is the frozen order
-constexpr std::array<std::string_view, 60> kPorts{
+constexpr std::array<std::string_view, 62> kPorts{
     "Input",        "Exciter",      "Hardness",    "Position",   "Force",
     "Noise",        "Engine",       "Tune",        "Fine",       "Decay",
     "Brightness",   "Stiffness",    "Tension",     "Detune",     "Material",
@@ -52,7 +52,8 @@ constexpr std::array<std::string_view, 60> kPorts{
     "LFO 1 Target", "LFO 1 Shape",  "LFO 1 Period", "LFO 1 Depth", "LFO 1 Delay",
     "LFO 2 Target", "LFO 2 Shape",  "LFO 2 Period", "LFO 2 Depth", "LFO 2 Delay",
     "LFO 3 Target", "LFO 3 Shape",  "LFO 3 Period", "LFO 3 Depth", "LFO 3 Delay",
-    "LFO 4 Target", "LFO 4 Shape",  "LFO 4 Period", "LFO 4 Depth", "LFO 4 Delay"};
+    "LFO 4 Target", "LFO 4 Shape",  "LFO 4 Period", "LFO 4 Depth", "LFO 4 Delay",
+    "String Level", "Exciter Level"};
 
 Process::ProcessModel* addCordito(const score::GUIApplicationContext&, score::Document& doc)
 {
@@ -155,11 +156,12 @@ TEST_CASE("Cordito: the layer builds and follows the engine", "[synthimi][cordit
     REQUIRE(engine);
 
     // The header and the first tab, String: its 12 knobs (Decay is a time
-    // chooser), Buzz (disabled on Pluck) and Level. Bow swaps Buzz for Bow
+    // chooser), Buzz (disabled on Pluck), and the mix: String, Exciter, Symp.
+    // (disabled without sympathetic strings) and Level. Bow swaps Buzz for Bow
     // Speed (Bow Attack and Bow Lift are time choosers, not knobs), Struck
     // swaps it for Modes, a spin box.
     const int pluck = visibleKnobs(scene);
-    CHECK(pluck == 14);
+    CHECK(pluck == 17);
     engine->setValue(int(crd::Engine::Bow));
     QApplication::processEvents();
     CHECK(visibleKnobs(scene) == pluck);

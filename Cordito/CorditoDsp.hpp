@@ -132,6 +132,12 @@ struct Voice
   std::array<double, 8> decayKey{};
   double decayF = 0., modalLastF = 0.;
   double gain = 1.;     // per-engine output gain
+  double excGain = 0.;  // the excitation, heard directly at Exciter 1
+
+  // The bow's rosin, heard through Exciter: a noise of its own, so that the
+  // synth's generator draws the same numbers whatever Exciter is
+  std::uint32_t hissRng = 1;
+  double hissLp = 0.;
 
   double env = 0.;      // output level follower
   std::int64_t age = 0; // samples since the note started: an int overflows in 12 h
@@ -211,6 +217,7 @@ public:
     outDcR.setCutoff(10., fs);
     limEnv = 0.;
     levelSm = -1.;
+    hissHardness = -1.;
     ctrlCount = 0;
     channels = {};
     monoStack.clear();
@@ -336,6 +343,8 @@ public:
       spreadSm = p.spread;
       bodyMixSm = p.bodyMix;
       sympLevelSm = p.sympLevel;
+      stringLevelSm = p.stringLevel;
+      exciterLevelSm = p.exciterLevel;
     }
     for(int i = 0; i < frames; i++)
     {
@@ -343,18 +352,27 @@ public:
         control(p);
       ctrlCount = (ctrlCount + 1) % kCtrl;
 
-      double sl = 0., sr = 0.;
+      exciterLevelSm += levelCoef * (p.exciterLevel - exciterLevelSm);
+      const bool heard = exciterLevelSm > 1e-6;
+      double sl = 0., sr = 0., xl = 0., xr = 0.;
       for(auto& v : voices)
         if(v.state != Voice::State::Free)
-          tickVoice(v, p, sl, sr);
+          tickVoice(v, p, heard, sl, sr, xl, xr);
 
-      // Sympathetic strings, driven by the voices
+      // Sympathetic strings, driven by the voices whatever String is, as a
+      // string muted at the pickup still shakes the bridge
       double yl = 0., yr = 0.;
       sympLevelSm += levelCoef * (p.sympLevel - sympLevelSm);
       if(symp.count > 0)
         symp.tick(0.5 * (sl + sr), sympLevelSm, yl, yr);
-      sl += yl;
-      sr += yr;
+      stringLevelSm += levelCoef * (p.stringLevel - stringLevelSm);
+      sl = sl * stringLevelSm + yl;
+      sr = sr * stringLevelSm + yr;
+      if(heard)
+      {
+        sl += xl * exciterLevelSm;
+        sr += xr * exciterLevelSm;
+      }
 
       // Body
       bodyMixSm += levelCoef * (p.bodyMix - bodyMixSm);
@@ -427,6 +445,26 @@ private:
   static constexpr double kLfoForce = 0.5;
   static constexpr double kLfoBuzz = 0.5;
 
+  //! What Exciter at 1 hears of each exciter (Pick, Finger, Hammer, Mallet,
+  //! Burst, Bow, E-Bow): measured at middle C and the default controls, so
+  //! that a click peaks as high as the string it sets going. Struck, the
+  //! modes take a momentum per sample: it is heard as a force.
+  static double exciterGain(Engine e, Exciter x, double fs) noexcept
+  {
+    if(e == Engine::Struck)
+    {
+      constexpr std::array<double, kExciterCount> struck{11., 1., 11., 7.9, 13.8, 1., 1.};
+      return struck[std::size_t(x)] * fs / 48000.;
+    }
+    constexpr std::array<double, kExciterCount> waveguide{0.88, 0.91, 0.87, 0.87, 1.35, 1., 1.};
+    return waveguide[std::size_t(x)];
+  }
+  //! The rosin, as loud as the string it bows at the default controls
+  static constexpr double kBowHiss = 5.15;
+  //! The rosin's lowpass, from 1.5 kHz (soft) to 7.5 kHz (hard), for this
+  //! Hardness, and its gain, so that it is as loud at any rate
+  double hissCoef = 1., hissNorm = 1., hissHardness = -1.;
+
   //! The RMS level of the string an E-Bow holds it at, and its pickup's Q
   static constexpr double kEbowTarget = 0.12;
   static constexpr double kEbowAsym = 0.3;
@@ -452,6 +490,7 @@ private:
   double limEnv = 0., limRelease = 0.9995;
   double levelSm = -1., levelCoef = 0.001, pressCoef = 0.002;
   double spreadSm = -1., bodyMixSm = -1., sympLevelSm = -1.;
+  double stringLevelSm = -1., exciterLevelSm = -1.;
   int ctrlCount = 0;
   std::uint64_t stampCounter = 0;
   //! Notes played, for the seeds of their LFOs
@@ -707,6 +746,8 @@ private:
     for(std::size_t i = 0; i < v.lfo.size(); i++)
       v.lfo[i].start(std::uint32_t(noteCount * 2654435761u + i * 40503u));
     v.lfoTime = 0.;
+    v.hissRng = std::uint32_t(noteCount * 2246822519u) | 1u;
+    v.excGain = exciterGain(v.engine, v.exciter, fs);
     const auto& cs = channels[std::size_t(v.channel)];
 
     // A little variance per note, as hands have: the attack of every note of
@@ -850,6 +891,14 @@ private:
 
   void control(const Params& p) noexcept
   {
+    if(p.hardness != hissHardness)
+    {
+      hissHardness = p.hardness;
+      hissCoef = 1.
+                 - std::exp(
+                     -kTwoPi * std::min(1500. * std::pow(5., p.hardness), kTopFreq * fs) / fs);
+      hissNorm = kBowHiss * std::sqrt(fs / 48000.);
+    }
     body.configure(p.body, p.bodySize, fs);
     if(p.sympLevel > 0. || sympLevelSm > 1e-4)
       symp.configure(p.sympTuning, p.sympRoot, p.sympDecay, fs);
@@ -1439,23 +1488,29 @@ private:
 
   // ---- Audio rate -------------------------------------------------------
 
-  void tickVoice(Voice& v, const Params& p, double& outL, double& outR) noexcept
+  //! The voice's string into outL / outR; with `heard`, its excitation into
+  //! excL / excR
+  void tickVoice(
+      Voice& v, const Params& p, bool heard, double& outL, double& outR, double& excL,
+      double& excR) noexcept
   {
     v.pressure += pressCoef * (rawPressure(v) - v.pressure);
     if(v.modulated)
       for(std::size_t t = 0; t < v.mod.size(); t++)
         v.mod[t] += v.modStep[t];
-    double l = 0., r = 0.;
+    double l = 0., r = 0., x = 0.;
     if(v.engine == Engine::Struck)
-      tickModal(v, l, r);
+      tickModal(v, l, r, x);
     else
-      tickWaveguide(v, p, l, r);
+      tickWaveguide(v, p, heard, l, r, x);
 
     l *= v.gain;
     r *= v.gain;
+    x *= v.excGain;
 
     // Safety: a voice that blew up is silenced and reset, alone
-    if(!finite(l) || !finite(r) || std::abs(l) >= 50. || std::abs(r) >= 50.) [[unlikely]]
+    if(!finite(l) || !finite(r) || std::abs(l) >= 50. || std::abs(r) >= 50.
+       || !finite(x) || std::abs(x) >= 50.) [[unlikely]]
     {
       v = resetVoice(v);
       return;
@@ -1476,6 +1531,7 @@ private:
       }
       l *= v.stealGain;
       r *= v.stealGain;
+      x *= v.stealGain;
     }
 
     const double a = std::max(std::abs(l), std::abs(r));
@@ -1491,6 +1547,7 @@ private:
     }
 
     // After the level follower: a tremolo's troughs must not retire a voice
+    double xl = x, xr = x;
     if(v.modulated)
     {
       if(const double lv = v.modOf(LfoTarget::Level); lv != 0.)
@@ -1498,32 +1555,40 @@ private:
         const double g = std::exp2(kLfoLevelOctaves * lv);
         l *= g;
         r *= g;
+        xl = xr = x * g;
       }
       if(const double pan = std::clamp(v.modOf(LfoTarget::Pan), -1., 1.); pan != 0.)
       {
         l *= std::min(1., 1. - pan);
         r *= std::min(1., 1. + pan);
+        xl *= std::min(1., 1. - pan);
+        xr *= std::min(1., 1. + pan);
       }
     }
 
     outL += l;
     outR += r;
+    excL += xl;
+    excR += xr;
   }
 
   double envRelease() const noexcept { return 1. - 1. / (kEnvTime * fs); }
 
-  void tickModal(Voice& v, double& l, double& r) noexcept
+  void tickModal(Voice& v, double& l, double& r, double& x) noexcept
   {
     double in = v.exc.tick(rng);
     in += v.hammer.tick();
+    x = in;
     v.modal.tick(in, l, r);
     if((v.age & 1023) == 0)
       v.modal.flushDenormals();
   }
 
-  void tickWaveguide(Voice& v, const Params& p, double& l, double& r) noexcept
+  void tickWaveguide(
+      Voice& v, const Params& p, bool heard, double& l, double& r, double& x) noexcept
   {
     const double e = v.exc.tick(rng);
+    x = e;
     const bool ebow = v.exciter == Exciter::EBow;
 
     // Bow: speed, pressure and rosin
@@ -1580,6 +1645,15 @@ private:
         // Hardness is the rosin: how sharply friction falls as the string
         // slides, from smooth to gritty
         v0 = vbFull * (0.4 - 0.3 * p.hardness);
+      }
+      // The rosin, heard: as loud as the bow is fast and pressed, brighter
+      // as it is harder. An E-Bow touches nothing.
+      if(heard && !ebow)
+      {
+        v.hissRng = v.hissRng * 1664525u + 1013904223u;
+        const double white = double(v.hissRng >> 8) * (2. / 16777216.) - 1.;
+        v.hissLp += hissCoef * (white - v.hissLp);
+        x += hissNorm * (0.03 + 0.22 * speed) * v.bowLevel * (0.3 + 0.7 * force) * v.hissLp;
       }
     }
 
