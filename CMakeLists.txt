@@ -85,6 +85,24 @@ avnd_score_plugin_add(
   OPTIMIZED
 )
 
+avnd_score_plugin_add(
+  BASE_TARGET score_addon_synthimi
+  SOURCES
+    Cordito/Cordito.hpp
+    Cordito/CorditoDsp.hpp
+    Cordito/Dsp/Body.hpp
+    Cordito/Dsp/Common.hpp
+    Cordito/Dsp/Exciters.hpp
+    Cordito/Dsp/Filters.hpp
+    Cordito/Dsp/Modal.hpp
+    Cordito/Dsp/Sympathetic.hpp
+    Cordito/Dsp/Waveguide.hpp
+  TARGET cordito
+  MAIN_CLASS Cordito
+  NAMESPACE crd
+  OPTIMIZED
+)
+
 # Kaboom's port count is large enough that instantiating it through the
 # boost.pfr fallback exhausts the compiler: g++-14 peaks at 40 GB and is
 # OOM-killed, and -fsyntax-only alone reaches 10 GB, so no optimisation flag
@@ -218,6 +236,14 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
   add_test(NAME score_addon_synthimi_fomo_envelope_test
     COMMAND score_addon_synthimi_fomo_envelope_test)
 
+  # Cordito: tuning, decay, expression, voices, and robustness to any input
+  add_executable(score_addon_synthimi_cordito_test tests/CorditoTest.cpp)
+  target_include_directories(score_addon_synthimi_cordito_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(score_addon_synthimi_cordito_test PRIVATE
+    Catch2::Catch2WithMain score_plugin_avnd)
+  add_test(NAME score_addon_synthimi_cordito_test COMMAND score_addon_synthimi_cordito_test)
+
   # Same compiler requirement as the kaboom object itself
   if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
           AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
@@ -247,4 +273,25 @@ if(SCORE_TESTING AND COMMAND score_add_test)
   target_compile_definitions(score_addon_synthimi_envelope_times_upgrade_test PRIVATE
     SYNTHIMI_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 
+  # Cordito in the application: port order, layer, and the default package's
+  # presets (CORDITO_PRESET_DIR overrides where they are looked for)
+  score_add_test(score_addon_synthimi_cordito_app_test
+    SOURCES tests/CorditoAppTest.cpp
+    APP
+    PLUGINS score_plugin_engine score_plugin_scenario score_lib_process)
+  add_dependencies(score_addon_synthimi_cordito_app_test score_addon_synthimi)
+  target_include_directories(score_addon_synthimi_cordito_app_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${SCORE_ROOT_SOURCE_DIR}/tests/fixtures")
+
+  # Cordito through score's execution: controls, MIDI in, audio out
+  score_add_test(score_addon_synthimi_cordito_exec_test
+    SOURCES tests/CorditoExecTest.cpp
+    APP
+    PLUGINS score_plugin_avnd score_plugin_dataflow score_plugin_engine score_plugin_scenario score_lib_process)
+  add_dependencies(score_addon_synthimi_cordito_exec_test score_addon_synthimi)
+  target_include_directories(score_addon_synthimi_cordito_exec_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${SCORE_ROOT_SOURCE_DIR}/tests/fixtures"
+    "${SCORE_ROOT_SOURCE_DIR}/3rdparty/avendish")
 endif()
