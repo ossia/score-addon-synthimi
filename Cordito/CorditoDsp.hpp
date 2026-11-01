@@ -112,6 +112,9 @@ struct Voice
   // Bow and E-Bow: the envelope at the control rate, and as it is ramped
   // from one control tick to the next, per sample (bowLevel, by bowStep)
   double bowEnv = 0., bowLevel = 0., bowStep = 0.;
+  //! The force's share of Schelleng's maximum per unit of bow speed, and the
+  //! force and position it was computed for
+  double bowShare = 0., bowForce = -1., bowPosition = -1.;
   bool bowing = false;
 
   // Release: 0 while held, ramps to 1 after note-off
@@ -640,7 +643,7 @@ private:
       return;
     v.held = false;
     // The damper's touch
-    if(p.damperNoise > 0. && v.engine != Engine::Bow)
+    if(p.damperNoise > 0. && !bowed(v.engine))
     {
       v.exc = {};
       v.exc.kind = ExciteGen::Noise;
@@ -911,7 +914,7 @@ private:
   {
     if(p.pressure != Pressure::Auto)
       return p.pressure;
-    if(v.engine == Engine::Bow)
+    if(bowed(v.engine))
       return v.exciter == Exciter::EBow ? Pressure::Force : Pressure::BowSpeed;
     return Pressure::Brightness;
   }
@@ -1015,7 +1018,7 @@ private:
     v.twoPols = p.detune > 0.01 || p.spread > 0.;
     const double detuneRatio = std::exp2(p.detune / 1200.);
     const auto& cs = channels[std::size_t(v.channel)];
-    const bool bowLive = v.engine == Engine::Bow;
+    const bool bowLive = bowed(v.engine);
     double beta = v.position;
     if(bowLive)
     {
@@ -1035,9 +1038,9 @@ private:
       const double w = kTwoPi * f / fs;
 
       // Nothing moved: the delays are where they should be
-      const std::array<double, 9> ctrlKey{
+      const std::array<double, 10> ctrlKey{
           f,    t.t60, t.ratio, t.stiffness, p.couplingDetune,
-          notchK, double(int(notchBody)), notchSize, beta};
+          notchK, double(int(notchBody)), notchSize, beta, p.hardness};
       // Nor once the pitch has settled where the designs were not made for
       const bool settled = f == pol.lastF && beta == pol.lastBeta;
       pol.lastF = f;
@@ -1059,9 +1062,9 @@ private:
       // Designed at every control tick of the kick, they took three quarters
       // of a plucked voice's time. Once the pitch holds still, they are
       // designed for it exactly. The delay lines always follow it exactly.
-      const std::array<double, 7> designKey{
+      const std::array<double, 8> designKey{
           t.t60, t.ratio, t.stiffness, p.couplingDetune,
-          notchK, double(int(notchBody)), notchSize};
+          notchK, double(int(notchBody)), notchSize, p.hardness};
       const bool redesign
           = v.firstUpdate || designKey != pol.designKey
             || (settled ? f != pol.designF : std::abs(f / pol.designF - 1.) > 2e-3);
@@ -1069,6 +1072,11 @@ private:
       {
         pol.designF = f;
         pol.designKey = designKey;
+        // The bow's corner: 15 (soft hair, Hardness 0) to 60 (hard) times
+        // the pitch, as a bow's width is a share of the string's length
+        pol.roundA = 1.
+                     - std::exp(
+                         -kTwoPi * std::min(15. * std::pow(4., p.hardness) * f, 0.4 * fs) / fs);
         if(v.exciter == Exciter::EBow)
         {
           const double s1 = pol.ebowRes.s1, s2 = pol.ebowRes.s2;
@@ -1205,7 +1213,7 @@ private:
       }
     }
     v.firstUpdate = false;
-    v.gain = v.engine == Engine::Bow ? 0.7 : 0.9;
+    v.gain = bowed(v.engine) ? 0.7 : 0.9;
   }
 
   void controlModal(Voice& v, const Params& p, double f0, const Tone& t) noexcept
@@ -1414,7 +1422,9 @@ private:
     const bool ebow = v.exciter == Exciter::EBow;
 
     // Bow: speed, pressure and rosin
-    double vBow = 0., slope = 0., offset = 0.75, drive = 0.;
+    double vBow = 0., fn = 0., v0 = 0., drive = 0., slope = 0., offset = 0.;
+    // Bow is STK's table, Friction the friction law
+    const bool classic = v.engine == Engine::Bow;
     if(v.bowing)
     {
       v.bowLevel = std::clamp(v.bowLevel + v.bowStep, 0., 1.);
@@ -1429,11 +1439,39 @@ private:
         force = std::clamp(force * (0.3 + 1.4 * press), 0., 1.);
       if(ebow)
         drive = (0.024 + 0.18 * force) * v.bowLevel;
-      else
+      else if(classic)
       {
         vBow = (0.03 + 0.22 * speed) * v.bowLevel;
         slope = 5. - 4. * force;
         offset = 0.9 - 0.3 * p.hardness;
+      }
+      else
+      {
+        // Force through Schelleng's window: the most a bow can press at this
+        // speed and position before the string stops returning to it,
+        // vb / ((mus - mud) beta); the knob spans 15 to 80 % of it: from a
+        // light, airy surface sound through the Helmholtz motion, in its
+        // middle at any speed, position and pitch, to a raucous crunch at
+        // the top. Bow Speed sets the loudness, Force the timbre.
+        const double vbFull = 0.03 + 0.22 * speed;
+        vBow = vbFull * v.bowLevel;
+        if(force != v.bowForce || v.position != v.bowPosition)
+        {
+          // A pow and a division: only when the force or the bow moves
+          v.bowForce = force;
+          v.bowPosition = v.position;
+          v.bowShare = 0.15 * std::pow(0.8 / 0.15, force)
+                       / ((BowFriction::kMuS - BowFriction::kMuD) * v.position);
+        }
+        fn = vbFull * v.bowShare;
+        // A bow lifting off takes its pressure away with its speed: at full
+        // grip, a slowing bow clamped the string where it touched it, and
+        // let go at once when it stopped, a detuned swell after the note
+        if(!(v.held || v.sustained))
+          fn *= v.bowLevel;
+        // Hardness is the rosin: how sharply friction falls as the string
+        // slides, from smooth to gritty
+        v0 = vbFull * (0.4 - 0.3 * p.hardness);
       }
     }
 
@@ -1476,15 +1514,19 @@ private:
       double newVel = e * (npol == 2 ? v.split[k] * 1.25 : 1.);
       if(vBow > 0.)
       {
-        // A bow that lifts takes its pressure away, not only its speed: the
-        // grip fades with the bow's envelope after note-off. At full grip, a
-        // bow slowing down clamped the string where it touched it, and let
-        // go of it at once when it stopped, 0.3 s later: a low, detuned
-        // swell after the note. While it is held, the grip is whole: a bow
-        // set on the string over a slow Bow Attack still speaks.
-        const double dv = vBow - vString;
-        const double grip = v.held || v.sustained ? 1. : v.bowLevel;
-        newVel += grip * dv * bowTable(dv, slope, offset);
+        if(classic)
+        {
+          // Its grip fades as the bow lifts
+          const double dv = vBow - vString;
+          const double grip = v.held || v.sustained ? 1. : v.bowLevel;
+          newVel += grip * dv * bowTable(dv, slope, offset);
+        }
+        else
+        {
+          const double push = pol.friction.tick(vBow, vString, fn, v0);
+          pol.bowRound += pol.roundA * (push - pol.bowRound);
+          newVel += pol.bowRound;
+        }
       }
       if(drive > 0.)
       {

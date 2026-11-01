@@ -47,7 +47,8 @@ enum class Engine : int
   Pluck = 0,
   Struck,
   Bow,
-  Buzz
+  Buzz,
+  Friction
 };
 
 enum class Exciter : int
@@ -107,7 +108,7 @@ enum class Pressure : int
 // The number of enumerators of each enum above. Cordito.hpp checks them
 // against the reflected enums at compile time: appending an enumerator
 // without updating its count would silently map it to the default.
-inline constexpr int kEngineCount = 4;
+inline constexpr int kEngineCount = 5;
 inline constexpr int kExciterCount = 7;
 inline constexpr int kSympTuningCount = 8;
 inline constexpr int kBodyCount = 9;
@@ -116,6 +117,12 @@ inline constexpr int kPressureCount = 6;
 
 //! An exciter the engine does not have falls back to its default, so that a
 //! preset can never be silent because of a combination.
+//! The engines that bow the waveguide: STK's table, or the friction law
+[[nodiscard]] inline constexpr bool bowed(Engine e) noexcept
+{
+  return e == Engine::Bow || e == Engine::Friction;
+}
+
 [[nodiscard]] inline Exciter resolveExciter(Engine e, Exciter x) noexcept
 {
   switch(e)
@@ -131,6 +138,7 @@ inline constexpr int kPressureCount = 6;
         return x;
       return Exciter::Hammer;
     case Engine::Bow:
+    case Engine::Friction:
       return x == Exciter::EBow ? Exciter::EBow : Exciter::Bow;
     case Engine::Buzz:
       if(x == Exciter::Pick || x == Exciter::Finger || x == Exciter::Burst)

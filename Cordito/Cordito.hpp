@@ -264,7 +264,7 @@ public:
         {
           halp_meta(name, "Bow")
           halp_meta(layout, halp::layouts::hbox)
-          static constexpr auto when() { return std::array{Engine::Bow}; }
+          static constexpr auto when() { return std::array{Engine::Bow, Engine::Friction}; }
           halp::item<&ins::bow_speed, small_knob> bow_speed;
           halp::item<&ins::bow_attack, small_knob> bow_attack;
           halp::item<&ins::bow_lift, small_knob> bow_lift;

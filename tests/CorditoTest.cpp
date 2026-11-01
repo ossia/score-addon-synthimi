@@ -47,7 +47,7 @@ Params plain(Engine e)
 {
   Params p;
   p.engine = e;
-  p.exciter = e == Engine::Bow ? Exciter::Bow : e == Engine::Struck ? Exciter::Hammer
+  p.exciter = bowed(e) ? Exciter::Bow : e == Engine::Struck ? Exciter::Hammer
                                                                       : Exciter::Pick;
   p.detune = 0.;
   p.spread = 0.;
@@ -235,7 +235,7 @@ TEST_CASE("Cordito: every engine plays in tune", "[synthimi][cordito]")
   // Bowed strings settle a little away from the fundamental of the loop
   // alone, as real ones do: the bow locks onto all the partials at once.
   for(double fs : {44100., 48000., 96000.})
-    for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz})
+    for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
       for(double bright : {0., 0.4, 0.6, 1.0})
         for(int note : {36, 48, 60, 72, 84, 96})
         {
@@ -249,7 +249,7 @@ TEST_CASE("Cordito: every engine plays in tune", "[synthimi][cordito]")
           // A bowed string's pitch depends on how much sooner its upper
           // partials die, as a real one's does: exact at Brightness 1, up to
           // 16 cents sharp at C2 in between. Not calibrated yet.
-          const double tolerance = e == Engine::Bow ? 20. : 1.5;
+          const double tolerance = bowed(e) ? 20. : 1.5;
           INFO("fs " << fs << " engine " << int(e) << " brightness " << bright << " note "
                      << note << ": " << c << " cents");
           CHECK(std::abs(c) < tolerance);
@@ -411,7 +411,7 @@ TEST_CASE("Cordito: repeated notes on one key do not pile up", "[synthimi][cordi
 
 TEST_CASE("Cordito: a released note dies within its Release and frees its voice", "[synthimi][cordito]")
 {
-  for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz})
+  for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
   {
     Params p = plain(e);
     p.decay = 20.;
@@ -436,7 +436,7 @@ TEST_CASE("Cordito: dark, coupled strings die out and free their voices", "[synt
   // The loop's DC mode used to outlive the note by minutes on dark settings:
   // the loss filter's gain at DC reached its clamp. The voices never retired
   // and kept the sympathetic strings and the body ringing.
-  for(Engine e : {Engine::Pluck, Engine::Buzz, Engine::Bow})
+  for(Engine e : {Engine::Pluck, Engine::Buzz, Engine::Bow, Engine::Friction})
     for(double bright : {0., 0.33, 0.7})
     {
       Params p = plain(e);
@@ -631,7 +631,7 @@ TEST_CASE("Cordito: the enumerations keep their order", "[synthimi][cordito]")
     const auto n = avnd::enum_names<decltype(e)>();
     return V(n.begin(), n.end());
   };
-  CHECK(names(Engine{}) == V{"Pluck", "Struck", "Bow", "Buzz"});
+  CHECK(names(Engine{}) == V{"Pluck", "Struck", "Bow", "Buzz", "Friction"});
   CHECK(names(Exciter{}) == V{"Pick", "Finger", "Hammer", "Mallet", "Burst", "Bow", "EBow"});
   CHECK(
       names(SympTuning{})
@@ -868,7 +868,7 @@ TEST_CASE("Cordito: bridge coupling never makes a string grow", "[synthimi][cord
 
 TEST_CASE("Cordito: the default sound survives a mono sum", "[synthimi][cordito]")
 {
-  for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz})
+  for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
   {
     Params p;
     p.engine = e;
@@ -1094,13 +1094,13 @@ TEST_CASE("Cordito: Buzz brightens, in tune, without killing the note", "[synthi
 TEST_CASE("Cordito: a bow lifts over Bow Lift, and lets go of the string as it does",
           "[synthimi][cordito]")
 {
-  // A light bow on a muted low string holds it without making it speak.
-  // Its grip used to stay whole while its speed faded: it clamped the string
-  // after note-off, then let go of it at once 0.28 s later, a detuned swell
-  // 70 dB louder than the note had been.
+  // A light bow on a muted low string. Its grip used to stay whole while its
+  // speed faded: it clamped the string after note-off, then let go of it at
+  // once 0.28 s later, a detuned swell louder than the note had been.
+  for(Engine e : {Engine::Bow, Engine::Friction})
   for(int note : {28, 36})
   {
-    Params p = plain(Engine::Bow);
+    Params p = plain(e);
     p.force = 0.05;
     p.velForce = 0.;
     p.mute = 0.7;
@@ -1108,16 +1108,21 @@ TEST_CASE("Cordito: a bow lifts over Bow Lift, and lets go of the string as it d
     p.bowLift = 0.1;
     Rig rig;
     rig.on(note, 100, p);
-    rig.run(1., p);
+    const auto held = rig.run(1., p);
     rig.off(note, p);
     const auto l = rig.run(0.6, p);
-    INFO("note " << note << ": 0-0.1 s " << 20. * std::log10(rms(l, rig.fs, 0., 0.1))
-                 << " dB, 0.2-0.3 s " << 20. * std::log10(rms(l, rig.fs, 0.2, 0.3)) << " dB");
-    CHECK(rms(l, rig.fs, 0.2, 0.3) < 1e-4);
+    const double h = rms(held, rig.fs, 0.5, 1.), a = rms(l, rig.fs, 0., 0.1),
+                 b = rms(l, rig.fs, 0.2, 0.3);
+    INFO("engine " << int(e) << " note " << note << ": held " << 20. * std::log10(h) << " dB, 0-0.1 s "
+                 << 20. * std::log10(a) << " dB, 0.2-0.3 s " << 20. * std::log10(b) << " dB");
+    // Dying away, not swelling
+    CHECK(b < a);
+    CHECK(b < 0.03 * std::max(h, a));
   }
+  for(Engine e : {Engine::Bow, Engine::Friction})
   for(double lift : {0.05, 1.})
   {
-    Params p = plain(Engine::Bow);
+    Params p = plain(e);
     p.bowLift = lift;
     Rig rig;
     rig.on(48, 100, p);
@@ -1134,8 +1139,8 @@ TEST_CASE("Cordito: a fast Bow Attack does not crackle", "[synthimi][cordito]")
 {
   // The bow's envelope moved every 16 samples: over a 20 ms attack, 60 steps
   // of its speed, a click train 15 dB above a slow attack's on bass notes
-  auto attackHf = [](double attack) {
-    Params p = plain(Engine::Bow);
+  auto attackHf = [](Engine e, double attack) {
+    Params p = plain(e);
     p.force = 0.05;
     p.velForce = 0.;
     p.noise = 0.;
@@ -1158,9 +1163,13 @@ TEST_CASE("Cordito: a fast Bow Attack does not crackle", "[synthimi][cordito]")
     }
     return 10. * std::log10(worst + 1e-30);
   };
-  const double fast = attackHf(0.02), slow = attackHf(0.2);
-  INFO("high frequencies in the attack: " << fast << " dB at 20 ms, " << slow << " dB at 200 ms");
-  CHECK(fast < slow + 6.);
+  for(Engine e : {Engine::Bow, Engine::Friction})
+  {
+    const double fast = attackHf(e, 0.02), slow = attackHf(e, 0.2);
+    INFO("engine " << int(e) << ": high frequencies in the attack: " << fast << " dB at 20 ms, "
+                   << slow << " dB at 200 ms");
+    CHECK(fast < slow + 6.);
+  }
 }
 
 TEST_CASE("Cordito: pressure glides from one MIDI value to the next", "[synthimi][cordito]")
@@ -1188,7 +1197,7 @@ TEST_CASE("Cordito: every engine plays in tune at its default controls, at every
   // defaults, the bow at 48 kHz sounded around the octave, its fundamental
   // gone, as the stretch of the stiff string pushed it off
   for(double fs : {44100., 48000., 96000.})
-    for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz})
+    for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
       for(int note : {48, 60, 72})
       {
         Params p;
@@ -1205,10 +1214,45 @@ TEST_CASE("Cordito: every engine plays in tune at its default controls, at every
                    << 20. * std::log10(h2 / h1) << " dB, " << c << " cents");
         // A bow that fell into another regime sounds its octave; a pluck or a
         // strike near the bridge just excites its second partial more
-        if(e == Engine::Bow)
+        if(bowed(e))
           CHECK(h1 > h2);
         CHECK(std::abs(c) < 10.);
       }
+}
+
+TEST_CASE("Cordito: the middle of Force is a Helmholtz motion, Bow Speed its loudness",
+          "[synthimi][cordito]")
+{
+  // Friction: Force spans a share of Schelleng's maximum for the bow's speed and
+  // position: its middle is the regular stick-slip motion, a sawtooth whose
+  // fundamental dominates, wherever the bow is and however fast it goes.
+  for(double position : {0.08, 0.13, 0.25})
+    for(int note : {48, 60, 72})
+    {
+      double level[2]{};
+      int i = 0;
+      for(double speed : {0.2, 0.9})
+      {
+        Params p = plain(Engine::Friction);
+        p.force = 0.5;
+        p.velForce = 0.;
+        p.position = position;
+        p.bowSpeed = speed;
+        p.noise = 0.;
+        Rig rig;
+        rig.on(note, 100, p);
+        const auto l = rig.run(1.5, p);
+        const auto steady = slice(l, rig.fs, 0.9, 1.5);
+        const double f0 = midiToHz(note);
+        INFO("position " << position << " note " << note << " speed " << speed);
+        CHECK(periodicity(steady, rig.fs, f0) > 0.9);
+        CHECK(goertzel(l, rig.fs, f0, 0.9, 1.5) > goertzel(l, rig.fs, 2. * f0, 0.9, 1.5));
+        level[i++] = 20. * std::log10(rms(l, rig.fs, 0.9, 1.5));
+      }
+      INFO("position " << position << " note " << note << ": " << level[0] << " dB at speed 0.2, "
+                       << level[1] << " dB at 0.9");
+      CHECK(level[1] > level[0] + 6.);
+    }
 }
 
 TEST_CASE("Cordito: the exciters sound alike at every sample rate", "[synthimi][cordito]")
@@ -1240,7 +1284,7 @@ TEST_CASE("Cordito: the exciters sound alike at every sample rate", "[synthimi][
 
 TEST_CASE("Cordito: hammering one key a thousand times stays bounded", "[synthimi][cordito]")
 {
-  for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz})
+  for(Engine e : {Engine::Pluck, Engine::Struck, Engine::Bow, Engine::Buzz, Engine::Friction})
   {
     Params p = plain(e);
     p.force = 1.;
