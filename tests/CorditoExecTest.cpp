@@ -1,11 +1,12 @@
 // Cordito through score's execution, as the user plays it: controls set on
-// the process (from the UI, a document), MIDI into its inlet, audio out of
-// its node. The DSP tests feed the synth directly and miss what lies
+// the process (from the UI, a preset, a document), MIDI into its inlet, audio
+// out of its node. The DSP tests feed the synth directly and miss what lies
 // between: preset loading, the controls' values and their conversion.
 #include <Cordito/Cordito.hpp>
 
 #include <Process/Dataflow/Port.hpp>
 #include <Process/Dataflow/WidgetInlets.hpp>
+#include <Process/Preset.hpp>
 #include <Process/ProcessList.hpp>
 
 #include <Scenario/Document/Interval/IntervalExecution.hpp>
@@ -24,11 +25,14 @@
 #include <ossia/detail/thread.hpp>
 
 #include <QApplication>
+#include <QDir>
+#include <QFile>
 
 #include <Crousti/Executor.hpp>
 #include <Crousti/ProcessModel.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <libremidi/ump_events.hpp>
+#include <rapidjson/document.h>
 #include <score_test/App.hpp>
 #include <score_test/Document.hpp>
 #include <score_test/Project.hpp>
@@ -39,6 +43,13 @@
 namespace
 {
 constexpr auto kUuid = "3c8e5f1a-9d27-4b6e-a0c4-7f2d18e95b36";
+
+QString presetDir()
+{
+  if(auto env = qEnvironmentVariable("CORDITO_PRESET_DIR"); !env.isEmpty())
+    return env;
+  return QDir::homePath() + "/Documents/ossia/score/packages/default/Presets/Cordito";
+}
 
 Process::ControlInlet& control(Process::ProcessModel& p, const QString& name)
 {
@@ -158,6 +169,103 @@ double goertzel(const std::vector<double>& x, double fs, double f, double t0, do
   return std::sqrt(std::max(0., s1 * s1 + s2 * s2 - c * s1 * s2));
 }
 
+//! How far the pitch moves over [t0, t1], in cents, from 40 ms windows
+double pitchSwing(const std::vector<double>& x, double fs, double f0, double t0, double t1)
+{
+  double lo = 1e9, hi = -1e9;
+  for(double t = t0; t + 0.04 <= t1; t += 0.02)
+  {
+    double best = f0, bv = -1.;
+    for(int i = -100; i <= 100; i++)
+    {
+      const double f = f0 * std::exp2(i / 1200.);
+      if(const double v = goertzel(x, fs, f, t, t + 0.04); v > bv)
+      {
+        bv = v;
+        best = f;
+      }
+    }
+    const double c = 1200. * std::log2(best / f0);
+    lo = std::min(lo, c);
+    hi = std::max(hi, c);
+  }
+  return hi - lo;
+}
+}
+
+TEST_CASE("Cordito: a preset sets every control, its LFOs included", "[synthimi][cordito]")
+{
+  // Loading a preset sets only the controls it stores: one without the LFO
+  // ports left the LFOs of the previous preset running
+  withCordito([](const score::GUIApplicationContext& ctx, Process::ProcessModel& proc,
+                 Running& r) {
+    auto& processes = ctx.interfaces<Process::ProcessFactoryList>();
+    auto load = [&](const QString& name) {
+      QFile f{presetDir() + "/" + name + ".scp"};
+      if(!f.open(QIODevice::ReadOnly))
+        SKIP("no preset " << name.toStdString() << " in " << presetDir().toStdString());
+      const auto preset = Process::Preset::fromJson(processes, f.readAll());
+      REQUIRE(preset);
+      proc.loadPreset(*preset);
+      r.run(0.01);
+    };
+    load("Late Vibrato");
+    auto& in = r.object().inputs;
+    CHECK(in.lfo1_target.value == crd::LfoTarget::Pitch);
+    CHECK(std::abs(in.lfo1_delay.value - 0.6f) < 1e-4f);
+    CHECK(in.engine.value == crd::Engine::Bow);
+
+    load("Lantern Thread");
+    CHECK(in.lfo1_target.value == crd::LfoTarget::Off);
+    CHECK(in.engine.value == crd::Engine::Pluck);
+
+    // Every preset stores every port
+    const QDir dir{presetDir()};
+    for(const auto& file : dir.entryList({"*.scp"}, QDir::Files))
+    {
+      QFile f{dir.filePath(file)};
+      REQUIRE(f.open(QIODevice::ReadOnly));
+      const auto preset = Process::Preset::fromJson(processes, f.readAll());
+      REQUIRE(preset);
+      rapidjson::Document doc;
+      doc.Parse(preset->data.constData(), std::size_t(preset->data.size()));
+      INFO(file.toStdString());
+      REQUIRE(doc.IsArray());
+      CHECK(int(doc.GetArray().Size()) == crd::kPresetPorts);
+    }
+  });
+}
+
+TEST_CASE("Cordito: a vibrato set from the controls waits its Delay", "[synthimi][cordito]")
+{
+  withCordito([](const score::GUIApplicationContext&, Process::ProcessModel& proc, Running& r) {
+    // As the inspector sets them: a combo box's value, {seconds, 0} for a
+    // time chooser
+    control(proc, "Engine").setValue(int(crd::Engine::Bow));
+    control(proc, "LFO 1 Target").setValue(int(crd::LfoTarget::Pitch));
+    control(proc, "LFO 1 Shape").setValue(int(crd::LfoShape::Sine));
+    control(proc, "LFO 1 Period").setValue(ossia::vec2f{0.25f, 0.f});
+    control(proc, "LFO 1 Depth").setValue(0.5f);
+    control(proc, "LFO 1 Delay").setValue(ossia::vec2f{1.f, 0.f});
+    r.run(0.01);
+    REQUIRE(r.object().inputs.lfo1_target.value == crd::LfoTarget::Pitch);
+    REQUIRE(r.object().inputs.lfo1_delay.value == 1.f);
+
+    r.note(60, 100);
+    const auto l = r.run(2.4);
+    const double fs = r.object().synth.sampleRate(), f0 = 440. * std::exp2((60 - 69) / 12.);
+    double e = 0.;
+    for(double x : l)
+      e += x * x;
+    INFO("synth at " << fs << " Hz, execution at " << r.plug.context().execState->sampleRate
+                     << " Hz, " << l.size() << " samples, rms " << std::sqrt(e / double(l.size()))
+                     << ", " << r.object().synth.activeVoices() << " voices");
+    REQUIRE(std::sqrt(e / double(l.size())) > 1e-3);
+    INFO("first second " << pitchSwing(l, fs, f0, 0.3, 0.95) << " cents, then "
+                         << pitchSwing(l, fs, f0, 1.6, 2.4));
+    CHECK(pitchSwing(l, fs, f0, 0.3, 0.95) < 6.);
+    CHECK(pitchSwing(l, fs, f0, 1.6, 2.4) > 70.);
+  });
 }
 
 namespace

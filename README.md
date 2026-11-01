@@ -103,7 +103,7 @@ artists. The BPM values are suggestions; the presets do not install rhythms.
 
 ## Cordito string synthesizer
 
-Cordito is a polyphonic physical model of strings: 16 voices, 39 controls, and
+Cordito is a polyphonic physical model of strings: 16 voices, 59 controls, and
 five engines selected by **Engine**:
 
 | Engine | Model | Exciters |
@@ -179,6 +179,24 @@ leaves it and lets every other harmonic move: near a body mode, a detuned,
 inharmonic pull. At 0, each partial is pulled only by the body's loading where
 it is, as on a real instrument; between, the pull is between the two.
 
+Four **LFOs** run in every voice, restarted with each note: a key played
+again on a ringing string and each note of Mono too, but not a Legato slide.
+Each moves one control (its **Target**), with a **Shape** (sine, triangle,
+rising and falling saw, square, random), a **Period** that can follow the
+tempo, a **Depth**, and a **Delay**: the LFO stays still for that long after
+the note starts, then rises to its depth over half as long again, from the
+start of its cycle, as a player's vibrato arrives once the note has spoken.
+At depth 1: **Pitch** one semitone either
+way (a vibrato), **Level** 12 dB, **Pan** from one side to the other,
+**Brightness** half its range, **Position** a quarter of the string, **Bow
+Speed** from still to twice as fast, **Force** and **Buzz** half their range.
+Position moves a bow along the string; a plucked or struck string takes the
+LFO's value at the moment it is played. Several LFOs on one target add up. With every
+Target Off, Cordito sounds exactly as without them. Every preset stores the
+LFOs, Off where it does not use them: loading a preset sets only the
+controls it stores, and one without them would leave the previous preset's
+LFOs running.
+
 Pitch bend, channel pressure, polyphonic aftertouch and CC 74 are read per
 MIDI channel, so MPE works without a mode switch. **Pressure** chooses what
 pressure drives (Auto: bow speed on Bow, brightness otherwise); CC 74 moves
@@ -212,7 +230,7 @@ frequencies is taken into account.
 
 ### Cordito presets
 
-The default package's `Presets/Cordito` collection holds 65 presets, dry apart
+The default package's `Presets/Cordito` collection holds 75 presets, dry apart
 from their body. Levels are matched by measurement.
 
 | Category | Presets |
@@ -241,6 +259,12 @@ For the Friction engine, voiced for it:
 | Category | Presets |
 | --- | --- |
 | Friction | Rosin Bloom, Over the Fingerboard, Grain Wire, Pressure Line (channel pressure is the bow's force), Bow Crunch, Halo Strings |
+
+For the LFOs:
+
+| Category | Presets |
+| --- | --- |
+| Motion | Late Vibrato, Pulse Harp, Drifting Rosin, Rotating Felt, Breathing Wire, Throbbing Bridge, Slow Signal, Scattered Glass, Bow Stutter, Tide Drone |
 
 Presets store their values by port index: Cordito's ports must only ever be
 appended to, and its enumerations (Engine, Exciter, Symp. Tuning, Body,

@@ -105,6 +105,30 @@ enum class Pressure : int
   Off
 };
 
+//! What an LFO moves
+enum class LfoTarget : int
+{
+  Off = 0,
+  Pitch,
+  Level,
+  Pan,
+  Brightness,
+  Position,
+  BowSpeed,
+  Force,
+  Buzz
+};
+
+enum class LfoShape : int
+{
+  Sine = 0,
+  Triangle,
+  SawUp,
+  SawDown,
+  Square,
+  Random
+};
+
 // The number of enumerators of each enum above. Cordito.hpp checks them
 // against the reflected enums at compile time: appending an enumerator
 // without updating its count would silently map it to the default.
@@ -114,6 +138,20 @@ inline constexpr int kSympTuningCount = 8;
 inline constexpr int kBodyCount = 9;
 inline constexpr int kPlayModeCount = 3;
 inline constexpr int kPressureCount = 6;
+inline constexpr int kLfoTargetCount = 9;
+inline constexpr int kLfoShapeCount = 6;
+//! LFOs per voice
+inline constexpr int kLfos = 4;
+
+//! One LFO: what it moves, how, how fast and how much
+struct LfoParams
+{
+  LfoTarget target = LfoTarget::Off;
+  LfoShape shape = LfoShape::Sine;
+  double period = 0.2; // seconds
+  double depth = 0.5;  // 0 .. 1: what 1 is depends on the target
+  double delay = 0.;   // seconds to fade in from the note's start
+};
 
 //! An exciter the engine does not have falls back to its default, so that a
 //! preset can never be silent because of a combination.
@@ -223,6 +261,7 @@ struct Params
   double spread = 0.5;
   double level = 1.;
   int voices = kMaxVoices;
+  std::array<LfoParams, kLfos> lfos{};
 
   //! The release time at which notes ring free instead of being damped
   static constexpr double kReleaseFree = 10.;
@@ -268,6 +307,14 @@ struct Params
     spread = sane(spread, 0., 1., 0.5);
     level = sane(level, 0., 2., 1.);
     voices = std::clamp(voices, 1, kMaxVoices);
+    for(auto& l : lfos)
+    {
+      l.target = saneEnum(l.target, kLfoTargetCount);
+      l.shape = saneEnum(l.shape, kLfoShapeCount);
+      l.period = sane(l.period, 0.025, 20., 0.2);
+      l.depth = sane(l.depth, 0., 1., 0.5);
+      l.delay = sane(l.delay, 0., 4., 0.);
+    }
   }
 };
 
