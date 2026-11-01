@@ -190,10 +190,10 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
   add_test(NAME score_addon_synthimi_kabang_pitch_envelope_test
     COMMAND score_addon_synthimi_kabang_pitch_envelope_test)
 
-  # A note sent to Minibang with no sample loaded: the drum channel and its
-  # sampler, compiled in.
+  # Sampler lifecycle: unloaded samples and pitch release in Kabang / Minibang.
   add_executable(score_addon_synthimi_minibang_no_sample_test
     tests/MinibangNoSampleTest.cpp
+    tests/KabangPitchReleaseTest.cpp
     Kabang/Kabang.cpp
     Kabang/Sampler.cpp)
   target_include_directories(score_addon_synthimi_minibang_no_sample_test PRIVATE
@@ -246,4 +246,5 @@ if(SCORE_TESTING AND COMMAND score_add_test)
     "${SCORE_ROOT_SOURCE_DIR}/tests/fixtures")
   target_compile_definitions(score_addon_synthimi_envelope_times_upgrade_test PRIVATE
     SYNTHIMI_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+
 endif()

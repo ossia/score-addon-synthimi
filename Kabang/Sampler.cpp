@@ -35,10 +35,7 @@ voice& sampler::trigger()
     preset |= opt_t::OptionProcessRealTime;
     preset |= opt_t::OptionThreadingNever;
     preset |= opt_t::OptionEngineFaster;
-    //preset |= opt_t::OptionEngineFiner;
-    //preset |= opt_t::OptionPitchHighQuality;
-    preset |= opt_t::OptionPitchHighSpeed;
-    //preset |= opt_t::OptionPitchHighConsistency;
+    preset |= opt_t::OptionPitchHighConsistency;
 
     delete ptr->rubberBand;
     ptr->rubberBand = new RubberBand::RubberBandStretcher(sf.rate, sf.channels, preset);
@@ -99,6 +96,7 @@ void sampler::process_frame(voice& v, double& out_l, double& out_r)
     else
     {
       v.amp_adsr.release();
+      v.pitch_adsr.release();
       for(int i = 0; i < sf.channels; i++)
         samples[i] = 0.f;
     }
@@ -108,7 +106,7 @@ void sampler::process_frame(voice& v, double& out_l, double& out_r)
   if(v.pitch_envelope || v.pitch != 1.)
   {
     v.rubberBand->setPitchScale(
-        pitch_scale(v.pitch, penv, v.pitch_envelope, v.pitch_track));
+        pitch_scale(v.pitch, penv, v.pitch_amount, v.pitch_envelope, v.pitch_track));
 
     while(v.rubberBand->available() == 0)
     {
