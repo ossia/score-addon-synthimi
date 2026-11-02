@@ -14,7 +14,9 @@
 #include <cstring>
 #include <vector>
 
-#if defined(__SSE__) || defined(_M_X64) || defined(_M_AMD64)
+// The SSE control register; Emscripten emulates SSE on WebAssembly SIMD,
+// which has none
+#if (defined(__SSE__) || defined(_M_X64) || defined(_M_AMD64)) && !defined(__EMSCRIPTEN__)
 #include <xmmintrin.h>
 #define CORDITO_HAS_SSE 1
 #endif
