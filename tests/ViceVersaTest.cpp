@@ -24,27 +24,7 @@
 
 #include <ossia/math/safe_math.hpp>
 
-namespace
-{
-std::atomic<bool> g_watch{false};
-std::atomic<int> g_allocs{0};
-}
-void* operator new(std::size_t n)
-{
-  if(g_watch.load(std::memory_order_relaxed))
-    g_allocs.fetch_add(1, std::memory_order_relaxed);
-  if(void* p = std::malloc(n ? n : 1))
-    return p;
-  throw std::bad_alloc{};
-}
-void operator delete(void* p) noexcept
-{
-  std::free(p);
-}
-void operator delete(void* p, std::size_t) noexcept
-{
-  std::free(p);
-}
+#include "AllocationCounter.hpp"
 
 using namespace viceversa;
 
@@ -1800,4 +1780,36 @@ TEST_CASE("In Mono, the pedal holds the voices left from Poly", "[viceversa][rob
   rig.off(64, p);
   rig.run(2., p);
   CHECK(rig.s->activeVoices() == 0);
+}
+
+TEST_CASE("The allocation counter sees every kind of allocation", "[viceversa][robustness]")
+{
+  // Called through volatile pointers: an allocation the compiler sees whole
+  // may be elided
+  void* (*volatile newArray)(std::size_t) = &::operator new[];
+  g_allocs = 0;
+  g_watch = true;
+  void* a = newArray(16);
+  void* b = ::operator new(64, std::align_val_t{64});
+  void* c = ::operator new[](64, std::align_val_t{64}, std::nothrow);
+  void* d = ::operator new(16, std::nothrow);
+  int expected = 4;
+#if defined(__GLIBC__)
+  void* (*volatile m)(std::size_t) = &std::malloc;
+  void* (*volatile ca)(std::size_t, std::size_t) = &std::calloc;
+  void* (*volatile re)(void*, std::size_t) = &std::realloc;
+  void* e = re(ca(4, 4), 64);
+  void* f = m(16);
+  expected += 3;
+#endif
+  g_watch = false;
+  CHECK(g_allocs == expected);
+  ::operator delete[](a);
+  ::operator delete(b, std::align_val_t{64});
+  ::operator delete[](c, std::align_val_t{64});
+  ::operator delete(d);
+#if defined(__GLIBC__)
+  std::free(e);
+  std::free(f);
+#endif
 }
