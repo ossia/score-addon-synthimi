@@ -85,6 +85,42 @@ bool load(Port& port, const QJsonObject& o)
     static_assert(sizeof(V) == 0, "port type without a decoding");
 }
 
+/*! The level as the tool means it, measured here on its own: middle C at
+ *  velocity 100, played through the processor as a host does, and the
+ *  loudest 100 ms of 8 s, RMS over both channels, in dBFS; and the peak
+ */
+template <typename Proc>
+std::pair<double, double> playedLevel(Proc& proc)
+{
+  constexpr int frames = 480, window = 4800, rate = 48000;
+  std::vector<float> l(frames), r(frames);
+  float* channels[2]{l.data(), r.data()};
+  proc.prepare(halp::setup{.input_channels = 0, .output_channels = 2, .frames = frames, .rate = rate});
+  proc.outputs.audio.samples = channels;
+  double loudest = 0., sum = 0., peak = 0.;
+  int inWindow = 0;
+  for(int b = 0; b < 8 * rate / frames; b++)
+  {
+    proc.inputs.midi.midi_messages.clear();
+    if(b == 0)
+      proc.inputs.midi.midi_messages.push_back(halp::midi_msg{{0x90, 60, 100}, 0});
+    proc(halp::tick{frames});
+    for(int i = 0; i < frames; i++)
+    {
+      const double a = l[std::size_t(i)], c = r[std::size_t(i)];
+      peak = std::max({peak, std::abs(a), std::abs(c)});
+      sum += 0.5 * (a * a + c * c);
+      if(++inWindow == window)
+      {
+        loudest = std::max(loudest, sum / window);
+        sum = 0.;
+        inWindow = 0;
+      }
+    }
+  }
+  return {10. * std::log10(std::max(loudest, 1e-12)), peak};
+}
+
 struct Entry
 {
   int index;
@@ -142,9 +178,13 @@ int checkFolder(const std::filesystem::path& dir)
     });
     CHECK(int(preset.size()) == ports);
 
+    // Measured here, through the processor, then by the tool's measure()
+    const auto [played, peak] = playedLevel(*proc);
     const double db = measure(*proc);
-    INFO("at " << db << " dBFS");
+    INFO("at " << played << " dBFS played, " << db << " dBFS by the tool, peak " << peak);
+    CHECK(std::abs(played - kTargetDb) <= kToleranceDb);
     CHECK(std::abs(db - kTargetDb) <= kToleranceDb);
+    CHECK(peak <= 1.);
   }
   return count;
 }
