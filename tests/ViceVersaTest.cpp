@@ -713,6 +713,63 @@ TEST_CASE("Every bank sounds, at its level, and the noise darkens", "[viceversa]
   CHECK(highShare(1.f) < 0.05);
 }
 
+TEST_CASE("The noise's colour is the same at any rate", "[viceversa][bank]")
+{
+  // The frequency under which half of the noise's power is, and its level,
+  // averaged over eight spectra of 2^16 samples. Each colour is a one-pole
+  // of a corner in Hz: a pole kept per sample would put it twice as high at
+  // 96 kHz as at 48.
+  struct Colour
+  {
+    double median, db;
+  };
+  auto colour = [](double fs, float frame) {
+    Rig rig(fs);
+    auto p = plain(BankId::Noise, frame);
+    rig.on(60, 127, p);
+    const std::size_t n = 1 << 16, segments = 8;
+    const auto x
+        = tail(rig.run(0.1 + double(segments * n) / fs, p), std::size_t(0.1 * fs));
+    std::vector<double> pw(n / 2);
+    for(std::size_t k = 0; k < segments; k++)
+    {
+      const auto seg = power(tail(x, k * n), n);
+      for(std::size_t i = 0; i < pw.size(); i++)
+        pw[i] += seg[i];
+    }
+    double all = 0.;
+    for(std::size_t i = 1; i < pw.size(); i++)
+      all += pw[i];
+    double acc = 0., median = 0.;
+    for(std::size_t i = 1; i < pw.size(); i++)
+    {
+      acc += pw[i];
+      if(acc >= 0.5 * all)
+      {
+        median = double(i) * fs / double(n);
+        break;
+      }
+    }
+    double e = 0.;
+    for(std::size_t i = 0; i < segments * n; i++)
+      e += double(x[i]) * x[i];
+    return Colour{median, 10. * std::log10(e / double(segments * n))};
+  };
+  for(float frame : {0.6f, 0.8f, 0.95f, 1.f})
+  {
+    const Colour ref = colour(48000., frame);
+    for(double fs : {44100., 96000.})
+    {
+      const Colour c = colour(fs, frame);
+      INFO("frame " << frame << " at " << fs << " Hz: half the power under " << c.median
+                    << " Hz, " << c.db << " dB; at 48 kHz " << ref.median << " Hz, "
+                    << ref.db << " dB");
+      CHECK(std::abs(c.median / ref.median - 1.) < 0.1);
+      CHECK(std::abs(c.db - ref.db) < 0.5);
+    }
+  }
+}
+
 TEST_CASE("The sampled banks keep their recorded spectra", "[viceversa][bank]")
 {
   // Frame by frame, the table's harmonics are the stored magnitudes, scaled
