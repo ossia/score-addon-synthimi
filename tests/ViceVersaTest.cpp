@@ -829,7 +829,9 @@ TEST_CASE("The noise's colour is the same at any rate", "[viceversa][bank]")
 TEST_CASE("A bank changed under a note crossfades instead of clicking", "[viceversa][bank]")
 {
   // Two smooth waves, a sine and the Organ's first registration (its 2nd and
-  // 4th harmonics): only a jump at the change would make a large step
+  // 4th harmonics), then both further along their frames, where the old bank
+  // is read at its own frame: only a jump at the change would make a large
+  // step
   const double fs = 48000.;
   const std::size_t fade = std::size_t(0.005 * fs);
   auto maxStep = [](const std::vector<float>& x, std::size_t from, std::size_t to) {
@@ -838,6 +840,7 @@ TEST_CASE("A bank changed under a note crossfades instead of clicking", "[viceve
       m = std::max(m, std::abs(double(x[i]) - x[i - 1]));
     return m;
   };
+  for(float frame : {0.f, 0.4f})
   for(auto [a, b] : {std::pair{BankId::SineSaw, BankId::Organ},
                      std::pair{BankId::Organ, BankId::SineSaw}})
   {
@@ -845,7 +848,7 @@ TEST_CASE("A bank changed under a note crossfades instead of clicking", "[viceve
     for(int k = 0; k < 8; k++)
     {
       Rig rig(fs);
-      auto p = plain(a, 0.f);
+      auto p = plain(a, frame);
       rig.on(48, 127, p);
       auto x = rig.run((14400.5 + 37. * k) / fs, p);
       const std::size_t at = x.size();
@@ -855,11 +858,132 @@ TEST_CASE("A bank changed under a note crossfades instead of clicking", "[viceve
       const double before = maxStep(x, at - 4800, at);
       const double after = maxStep(x, at + 2 * fade, at + 2 * fade + 4800);
       const double across = maxStep(x, at, at + 2 * fade);
-      INFO("bank " << int(a) << " to " << int(b) << " after " << at << " samples: steps "
+      INFO("frame " << frame << ", bank " << int(a) << " to " << int(b) << " after " << at
+                    << " samples: steps "
                    << before << " before, " << across << " across, " << after << " after");
       CHECK(before > 0.001);
       CHECK(after > 0.001);
       CHECK(across < 1.25 * std::max(before, after));
+    }
+  }
+}
+
+TEST_CASE("Every bank has as many frames", "[viceversa][bank]")
+{
+  // A frame position is the same place in any bank: a crossfade reads the
+  // old bank where the new one starts
+  for(int b = 0; b < kBankCount; b++)
+  {
+    INFO("bank " << b);
+    CHECK(builtinBanks()[std::size_t(b)].frames() == kBankFrames);
+  }
+}
+
+TEST_CASE("A voice started during a bank's fade plays the new bank alone", "[viceversa][bank]")
+{
+  // One voice: the new note steals it, and starts 3 ms into the 5 ms fade.
+  // Against a synth that had the new bank all along, it is the same note.
+  // The first note is 40 dB down, so that what it leaves in the DC blocker
+  // does not tell the two apart.
+  const double fs = 48000.;
+  auto play = [&](BankId first) {
+    Rig rig(fs);
+    auto p = plain(first, 0.6f);
+    p.voices = 1;
+    p.velLevel = 1.f;
+    rig.on(48, 1, p);
+    rig.run(0.3, p);
+    p.src[0].bank = BankId::Organ;
+    rig.on(60, 127, p);
+    return rig.run(0.02, p);
+  };
+  const auto changed = play(BankId::SineSaw), ref = play(BankId::Organ);
+  double diff = 0., peak = 0.;
+  for(auto i = std::size_t(0.004 * fs); i < std::size_t(0.005 * fs); i++)
+  {
+    diff = std::max(diff, std::abs(double(changed[i]) - ref[i]));
+    peak = std::max(peak, std::abs(double(ref[i])));
+  }
+  INFO("difference " << diff << ", peak " << peak);
+  CHECK(peak > 0.05);
+  CHECK(diff < 0.02 * peak);
+}
+
+TEST_CASE("A bank changed again during a fade gets there", "[viceversa][bank]")
+{
+  // The second change waits for the first fade, then fades in turn: after
+  // both, the note is the last bank's, as if it had played it all along
+  const double fs = 48000.;
+  Rig rig(fs), ref(fs);
+  auto p = plain(BankId::SineSaw, 0.5f), q = plain(BankId::Glass, 0.5f);
+  rig.on(48, 127, p);
+  ref.on(48, 127, q);
+  rig.run(0.3, p);
+  ref.run(0.3, q);
+  p.src[0].bank = BankId::Organ;
+  rig.run(0.001, p);
+  ref.run(0.001, q);
+  p.src[0].bank = BankId::Glass;
+  const auto x = rig.run(0.1, p), y = ref.run(0.1, q);
+  double diff = 0., peak = 0.;
+  for(auto i = std::size_t(0.05 * fs); i < x.size(); i++)
+  {
+    diff = std::max(diff, std::abs(double(x[i]) - y[i]));
+    peak = std::max(peak, std::abs(double(y[i])));
+  }
+  INFO("difference " << diff << ", peak " << peak);
+  CHECK(peak > 0.05);
+  CHECK(diff < 0.01 * peak);
+}
+
+TEST_CASE("A fade to or from the noise keeps the noise's colour moving", "[viceversa][bank]")
+{
+  // The colour follows a fast LFO on the frame: while the noise fades out,
+  // its pole must still follow it, or it drifts on its last slope, out of
+  // the unit circle
+  const double fs = 48000.;
+  auto rms = [](const std::vector<float>& x, std::size_t from, std::size_t to) {
+    double e = 0.;
+    for(std::size_t i = from; i < to; i++)
+      e += double(x[i]) * x[i];
+    return std::sqrt(e / double(to - from));
+  };
+  for(auto [a, b] : {std::pair{BankId::Noise, BankId::SineSaw},
+                     std::pair{BankId::SineSaw, BankId::Noise}})
+  {
+    for(int k = 0; k < 8; k++)
+    {
+      Rig rig(fs);
+      auto p = plain(a, 0.5f);
+      p.lfos[0].target = ModTarget::FrameA;
+      p.lfos[0].shape = LfoShape::Triangle;
+      p.lfos[0].period = 0.02f;
+      p.lfos[0].depth = 1.f;
+      p.sanitize();
+      rig.on(48, 127, p);
+      auto x = rig.run((14400.5 + 61. * k) / fs, p);
+      const std::size_t at = x.size();
+      p.src[0].bank = b;
+      const auto y = rig.run(0.2, p);
+      x.insert(x.end(), y.begin(), y.end());
+      for(float v : x)
+        REQUIRE(ossia::safe_isfinite(v));
+      // The noise's level moves with its colour: against the loudest and
+      // the average 10 ms of the steady parts
+      auto loudest = [&](std::size_t from, std::size_t to) {
+        double m = 0.;
+        for(std::size_t i = from; i + 480 <= to; i += 240)
+          m = std::max(m, rms(x, i, i + 480));
+        return m;
+      };
+      const double before = loudest(at - 4800, at), after = loudest(at + 2400, at + 7200);
+      const double quiet = std::min(rms(x, at - 4800, at), rms(x, at + 2400, at + 7200));
+      const double across = rms(x, at, at + 480);
+      INFO("bank " << int(a) << " to " << int(b) << " after " << at << " samples: rms "
+                   << across << " across; loudest 10 ms " << before << " before, " << after
+                   << " after");
+      CHECK(across < 1.5 * std::max(before, after));
+      CHECK(across > 0.25 * quiet);
     }
   }
 }
