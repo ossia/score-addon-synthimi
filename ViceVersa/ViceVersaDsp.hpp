@@ -852,12 +852,16 @@ private:
 
   void monoNoteOff(int note, int ch) noexcept
   {
+    // Notes left from Poly
     for(int i = 1; i < kMaxVoices; i++)
-      if(voice(i).state == Voice::Active && voice(i).note == note && voice(i).held)
+    {
+      auto& w = voice(i);
+      if(w.state == Voice::Active && w.note == note && w.channel == ch && w.held)
       {
-        voice(i).held = false;
-        releaseVoice(voice(i));
+        w.held = false;
+        releaseVoice(w);
       }
+    }
     auto& v = voice(0);
     if(v.state != Voice::Active || v.note != note || v.channel != ch)
       return;
