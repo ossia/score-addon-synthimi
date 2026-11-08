@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <memory>
 #include <new>
+#include <numbers>
 #include <random>
 #include <vector>
 
@@ -46,8 +47,6 @@ using namespace viceversa;
 
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
-
 void fftc(std::vector<std::complex<double>>& a)
 {
   viceversa::fft(a, false);
@@ -58,7 +57,7 @@ std::vector<double> power(const std::vector<float>& x, std::size_t n)
   std::vector<std::complex<double>> a(n);
   for(std::size_t i = 0; i < n; i++)
   {
-    const double t = 2. * kPi * double(i) / double(n);
+    const double t = 2. * std::numbers::pi * double(i) / double(n);
     const double w = 0.35875 - 0.48829 * std::cos(t) + 0.14128 * std::cos(2. * t)
                      - 0.01168 * std::cos(3. * t);
     a[i] = w * double(x[i]);
@@ -96,14 +95,14 @@ double measureFrequency(const std::vector<float>& x, double f, double fs)
     std::complex<double> acc{};
     for(std::size_t i = 0; i < n; i++)
     {
-      const double w = 0.5 - 0.5 * std::cos(2. * kPi * double(i) / double(n));
-      acc += w * double(x[from + i]) * std::polar(1., -2. * kPi * f * double(from + i) / fs);
+      const double w = 0.5 - 0.5 * std::cos(2. * std::numbers::pi * double(i) / double(n));
+      acc += w * double(x[from + i]) * std::polar(1., -2. * std::numbers::pi * f * double(from + i) / fs);
     }
     return std::arg(acc);
   };
   double d = phaseAt(gap) - phaseAt(0);
-  d -= 2. * kPi * std::round(d / (2. * kPi));
-  return f + d * fs / (2. * kPi * double(gap));
+  d -= 2. * std::numbers::pi * std::round(d / (2. * std::numbers::pi));
+  return f + d * fs / (2. * std::numbers::pi * double(gap));
 }
 
 //! Source A alone, the filter open and flat, a sustained level
@@ -237,8 +236,8 @@ TEST_CASE("A cycle of any length is analysed exactly", "[viceversa][bank]")
   for(int i = 0; i < n; i++)
   {
     const double t = double(i) / n;
-    x[std::size_t(i)] = float(0.8 * std::sin(2. * kPi * t) + 0.3 * std::cos(2. * kPi * 3. * t)
-                              - 0.1 * std::sin(2. * kPi * 7. * t));
+    x[std::size_t(i)] = float(0.8 * std::sin(2. * std::numbers::pi * t) + 0.3 * std::cos(2. * std::numbers::pi * 3. * t)
+                              - 0.1 * std::sin(2. * std::numbers::pi * 7. * t));
   }
   const Spectrum s = analyse(x);
   CHECK(std::abs(s[0] - std::complex<double>(0., -0.8)) < 1e-6);
@@ -252,9 +251,9 @@ TEST_CASE("A cycle of any length is analysed exactly", "[viceversa][bank]")
   for(int i = 0; i < 5000; i++)
   {
     const float ph = float(i) / 5000.f;
-    const double ref = 0.8 * std::sin(2. * kPi * ph) + 0.3 * std::cos(2. * kPi * 3. * ph)
-                       - 0.1 * std::sin(2. * kPi * 7. * ph);
-    worst = std::max(worst, std::abs(double(b.read(0.f, 0, 0.f, ph)) - ref));
+    const double ref = 0.8 * std::sin(2. * std::numbers::pi * ph) + 0.3 * std::cos(2. * std::numbers::pi * 3. * ph)
+                       - 0.1 * std::sin(2. * std::numbers::pi * 7. * ph);
+    worst = std::max(worst, std::abs(double(b.read(0.f, Mip{}, ph)) - ref));
   }
   CHECK(worst < 2e-4);
 }
@@ -265,9 +264,7 @@ TEST_CASE("The mip level is always safe and fades smoothly", "[viceversa][bank]"
   float prevBright = 1e9f;
   for(float dx = 1e-5f; dx < kSafeCycles; dx *= 1.001f)
   {
-    int level;
-    float frac;
-    Bank::levelFor(dx, level, frac);
+    const auto [level, frac] = Bank::levelFor(Bank::octavesOver(dx));
     // Every harmonic of the level read is under the safe limit
     CHECK(float(levelHarmonics(level)) * dx <= kSafeCycles * 1.0001f);
     REQUIRE(frac >= 0.f);
@@ -396,14 +393,15 @@ TEST_CASE("The ladder filters at 24 dB per octave and stays bounded", "[vicevers
   const double fs = 48000.;
   auto gainAt = [&](double f, double fc, float k) {
     Ladder lad;
-    const double g = std::tan(kPi * fc / fs);
-    const vec4 G(float(g / (1. + g)));
+    const double g = std::tan(std::numbers::pi * fc / fs);
+    const auto c = Ladder::Coefs::make(vec4(float(g / (1. + g))), vec4(k));
     double e = 0.;
     const int n = 48000;
     for(int i = 0; i < n; i++)
     {
-      const float x = 0.01f * float(std::sin(2. * kPi * f * i / fs));
-      const float y = lad.process(vec4(x), G, vec4(k), vec4(1.f))[0];
+      const float x = 0.01f * float(std::sin(2. * std::numbers::pi * f * i / fs));
+      // As the engine has it: drive 1, the passband given back
+      const float y = lad.process(vec4(x), c)[0] * (1.f + 0.5f * k);
       if(i >= n / 2)
         e += double(y) * double(y);
     }
@@ -416,17 +414,41 @@ TEST_CASE("The ladder filters at 24 dB per octave and stays bounded", "[vicevers
   // Resonance peaks at the cutoff
   CHECK(gainAt(1000., 1000., 3.5f) > gainAt(1000., 1000., 0.f) + 10.);
 
-  // Self-oscillating and driven hard: bounded
-  Ladder lad;
-  const vec4 G(0.2f);
-  float peak = 0.f;
-  for(int i = 0; i < 48000; i++)
-  {
-    const float x = i < 10 ? 1.f : 0.f;
-    peak = std::max(peak, std::abs(lad.process(vec4(x), G, vec4(3.9f), vec4(4.f))[0]));
-  }
-  CHECK(std::isfinite(peak));
-  CHECK(peak < 4.f);
+  // Full resonance oscillates by itself, at the cutoff, as long as it is
+  // left; driven hard, it stays bounded. Below 4 it dies out.
+  auto ring = [&](float k, float drive, double& hz) {
+    Ladder lad;
+    const double fc = 1000.;
+    const double g = std::tan(std::numbers::pi * fc / fs);
+    const auto c = Ladder::Coefs::make(vec4(float(g / (1. + g))), vec4(k));
+    float peak = 0.f;
+    double e = 0.;
+    int crossings = 0;
+    float prev = 0.f;
+    const int n = 10 * 48000, from = n - 48000;
+    for(int i = 0; i < n; i++)
+    {
+      const float x = i < 10 ? drive : 0.f;
+      const float y = lad.process(vec4(x), c)[0];
+      peak = std::max(peak, std::abs(y));
+      if(i >= from)
+      {
+        e += double(y) * y;
+        crossings += (prev < 0.f) != (y < 0.f);
+      }
+      prev = y;
+    }
+    hz = crossings / 2.;
+    CHECK(std::isfinite(peak));
+    CHECK(peak < 2.f);
+    return std::sqrt(e / 48000.);
+  };
+  double hz = 0.;
+  const double still = ring(kMaxFeedback, 4.f, hz);
+  CHECK(still > 0.05); // after ten seconds without input
+  CHECK(hz == Catch::Approx(1000.).epsilon(0.05));
+  CHECK(ring(kMaxFeedback, 0.001f, hz) > 0.05); // from a whisper too
+  CHECK(ring(3.9f, 4.f, hz) < 1e-6);
 }
 
 TEST_CASE("ViceVersa's vector moves the mix", "[viceversa][vector]")
@@ -452,7 +474,7 @@ TEST_CASE("ViceVersa's vector moves the mix", "[viceversa][vector]")
   auto level = [&](const std::vector<float>& v, double f) {
     std::complex<double> acc{};
     for(std::size_t i = 0; i < v.size(); i++)
-      acc += double(v[i]) * std::polar(1., -2. * kPi * f * double(i) / fs);
+      acc += double(v[i]) * std::polar(1., -2. * std::numbers::pi * f * double(i) / fs);
     return std::abs(acc) / double(v.size());
   };
   CHECK(level(a, 110.) > 100. * level(a, 440.));
@@ -465,15 +487,19 @@ TEST_CASE("ViceVersa's voices end, and any input is safe", "[viceversa][robustne
   std::uniform_real_distribution<float> u(-1e6f, 1e6f);
   std::uniform_int_distribution<int> byte(0, 255);
   const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float inf = std::numeric_limits<float>::infinity();
   for(int trial = 0; trial < 20; trial++)
   {
     Rig rig(trial % 2 ? 44100. : 96000.);
     std::vector<float> l(512), r(512);
     Params p;
-    auto pick = [&] { return byte(rng) % 4 == 0 ? nan : u(rng); };
+    auto pick = [&] {
+      const int k = byte(rng) % 8;
+      return k == 0 ? nan : k == 1 ? (byte(rng) % 2 ? inf : -inf) : u(rng);
+    };
     for(auto& s : p.src)
     {
-      s.bank = BankId(byte(rng) % 20 - 3);
+      s.bank = BankId(byte(rng) % 30 - 3);
       s.frame = pick();
       s.coarse = pick();
       s.fine = pick();
@@ -486,24 +512,34 @@ TEST_CASE("ViceVersa's voices end, and any input is safe", "[viceversa][robustne
     for(auto& v : e)
       v = byte(rng) % 3 ? float(byte(rng)) / 255.f : pick();
     p.vecEnv = VecEnvSpec::decode(e, VecEnvSpec::centred());
+    p.vecEnv.setLoop(VecLoop(byte(rng) % 5 - 1), byte(rng) % 7 - 1, byte(rng) % 7 - 1);
+    for(auto& t : p.vecEnv.time)
+      t = byte(rng) % 2 ? double(pick()) : 1e-3 * byte(rng);
+    p.vecEnv.release = byte(rng) % 2 ? double(pick()) : 1e-3 * byte(rng);
+    p.vecEnvDepth = pick();
     for(auto& l : p.lfos)
     {
       l.target = ModTarget(byte(rng) % 20 - 3);
       l.shape = LfoShape(byte(rng) % 10 - 2);
-      l.period = pick();
-      l.depth = pick();
-      l.phase = pick();
-      l.delay = pick();
+      // Half of them in range, so that they move things
+      const bool real = byte(rng) % 2;
+      l.period = real ? 0.02f + 0.01f * byte(rng) : pick();
+      l.depth = real ? byte(rng) / 255.f : pick();
+      l.phase = real ? byte(rng) / 255.f : pick();
+      l.delay = real ? 0.002f * byte(rng) : pick();
     }
+    p.frameEnv = pick();
     p.cutoff = pick();
     p.resonance = pick();
     p.drive = pick();
     p.filterEnv = pick();
+    p.keyTrack = pick();
     p.aA = pick();
     p.aR = pick();
     p.fD = pick();
     p.play = PlayMode(byte(rng) % 4);
     p.glide = pick();
+    p.bendRange = pick();
     p.level = pick();
     p.voices = byte(rng) - 100;
     p.sanitize();
@@ -518,11 +554,20 @@ TEST_CASE("ViceVersa's voices end, and any input is safe", "[viceversa][robustne
                                    (unsigned char)byte(rng)};
         rig.s->midi(msg, 1 + byte(rng) % 3, p);
       }
-      rig.s->render(p, l.data(), r.data(), 1 + byte(rng) % 512);
-      for(float v : l)
+      // The spread across 0, and the loop's span moved under the voices
+      if(block % 8 == 0)
       {
-        REQUIRE(std::isfinite(v));
-        REQUIRE(std::abs(v) <= 1.f);
+        p.spread = byte(rng) % 3 == 0 ? 0.f : byte(rng) / 255.f;
+        p.vecEnv.setLoop(p.vecEnv.loop, byte(rng) % 4, byte(rng) % 5);
+      }
+      const int n = 1 + byte(rng) % 512;
+      rig.s->render(p, l.data(), r.data(), n);
+      for(int i = 0; i < n; i++)
+      {
+        REQUIRE(std::isfinite(l[std::size_t(i)]));
+        REQUIRE(std::isfinite(r[std::size_t(i)]));
+        REQUIRE(std::abs(l[std::size_t(i)]) <= 1.f);
+        REQUIRE(std::abs(r[std::size_t(i)]) <= 1.f);
       }
     }
     g_watch = false;
@@ -538,6 +583,26 @@ TEST_CASE("ViceVersa's voices end, and any input is safe", "[viceversa][robustne
     for(int i = 0; i < 200; i++)
       rig.s->render(p, l.data(), r.data(), 512);
     CHECK(rig.s->activeVoices() == 0);
+  }
+
+  // Every port's range is the sanitizer's, and NaN its default
+  {
+    Params q;
+    q.vecEnv.time = {nan, 1e9, -1., 0.};
+    q.vecEnv.release = std::numeric_limits<double>::infinity();
+    q.lfos[0].period = 1000.f;
+    q.lfos[0].delay = 100.f;
+    q.glide = 100.f;
+    q.aA = 100.f;
+    q.sanitize();
+    CHECK(q.vecEnv.time[0] == 1.);
+    CHECK(q.vecEnv.time[1] == 20.);
+    CHECK(q.vecEnv.time[2] == 0.001);
+    CHECK(q.vecEnv.release == 0.3);
+    CHECK(q.lfos[0].period == 20.f);
+    CHECK(q.lfos[0].delay == 4.f);
+    CHECK(q.glide == 2.f);
+    CHECK(q.aA == 10.f);
   }
 }
 
@@ -673,6 +738,24 @@ TEST_CASE("The sampled banks keep their recorded spectra", "[viceversa][bank]")
   }
 }
 
+//! What the host's painter sends a widget: crousti's custom_mouse_event
+struct Click
+{
+  enum button
+  {
+    no_button,
+    left = (1 << 1),
+    right = (1 << 2),
+    middle = (1 << 3)
+  };
+  float x, y;
+  enum button button = left;
+};
+Click click(double x, double y, enum Click::button b = Click::left)
+{
+  return {float(x), float(y), b};
+}
+
 TEST_CASE("The pad moves the envelope's points or the Position, and shows the voices",
           "[viceversa][ui]")
 {
@@ -695,9 +778,20 @@ TEST_CASE("The pad moves the envelope's points or the Position, and shows the vo
   std::get<0>(pad.values) = VecEnvSpec::centred().points();
   pad.sync();
 
-  // Points: drag point 4 (at the centre) to C, the east corner
-  CHECK(pad.mouse_press(VectorPad::cx(), VectorPad::cy()));
-  pad.mouse_move(VectorPad::px(1.f), VectorPad::cy());
+  // Not with the right button
+  CHECK(!pad.mouse_press(click(VectorPad::cx(), VectorPad::cy(), Click::right)));
+  CHECK(starts == 0);
+  // Points: drag point 4 (at the centre) to C, the east corner. Grabbed off
+  // its centre: it moves as the cursor does, without first jumping to it
+  CHECK(pad.mouse_press(click(VectorPad::cx() + 4., VectorPad::cy() - 3.)));
+  pad.mouse_move(VectorPad::cx() + 4., VectorPad::cy() - 3.);
+  REQUIRE(!envs.empty());
+  {
+    const auto still = VecEnvSpec::decode(envs.back(), VecEnvSpec::centred());
+    CHECK(std::abs(still.x[4]) < 1e-4f);
+    CHECK(std::abs(still.y[4]) < 1e-4f);
+  }
+  pad.mouse_move(VectorPad::px(1.f) + 4., VectorPad::cy() - 3.);
   pad.mouse_release(0., 0.);
   REQUIRE(!envs.empty());
   const auto spec = VecEnvSpec::decode(envs.back(), VecEnvSpec::centred());
@@ -709,10 +803,10 @@ TEST_CASE("The pad moves the envelope's points or the Position, and shows the vo
   // The second button: a press anywhere in the diamond puts the Position
   // there, a drag follows, and the envelope is left alone
   const double button = VectorPad::kButton * 0.5;
-  CHECK(pad.mouse_press(VectorPad::buttonX() + button, VectorPad::buttonY(1) + button));
+  CHECK(pad.mouse_press(click(VectorPad::buttonX() + button, VectorPad::buttonY(1) + button)));
   CHECK(pad.target == VectorPad::Position);
   const auto before = envs.size();
-  CHECK(pad.mouse_press(VectorPad::cx(), VectorPad::py(0.5f)));
+  CHECK(pad.mouse_press(click(VectorPad::cx(), VectorPad::py(0.5f))));
   pad.mouse_move(VectorPad::px(-2.f), VectorPad::cy()); // outside: onto the edge
   pad.mouse_release(0., 0.);
   REQUIRE(moves.size() == 2);
@@ -721,8 +815,24 @@ TEST_CASE("The pad moves the envelope's points or the Position, and shows the vo
   CHECK(envs.size() == before);
   CHECK(commits == 2);
   // The first button: back to the points
-  CHECK(pad.mouse_press(VectorPad::buttonX() + button, VectorPad::buttonY(0) + button));
+  CHECK(pad.mouse_press(click(VectorPad::buttonX() + button, VectorPad::buttonY(0) + button)));
   CHECK(pad.target == VectorPad::Points);
+
+  // The host's reset, on transport stop, mid-drag: the gesture is undone,
+  // and the voices' dots go
+  int rollbacks = 0;
+  env.rollback = pos.rollback = [&] { rollbacks++; };
+  int repaints = 0;
+  pad.update = [&] { repaints++; };
+  pad.live.count = 3;
+  REQUIRE(pad.mouse_press(click(VectorPad::px(1.f), VectorPad::cy())));
+  pad.mouse_move(VectorPad::px(0.5f), VectorPad::cy());
+  pad.reset();
+  CHECK(rollbacks == 1);
+  CHECK(pad.drag < 0);
+  CHECK(pad.live.count == 0);
+  CHECK(repaints > 0);
+  CHECK(commits == 2);
 
   // The loop comes from its menus
   std::get<2>(pad.values) = int(VecLoop::BackAndForth);
@@ -813,14 +923,16 @@ TEST_CASE("Each LFO target moves what it names", "[viceversa][lfo]")
 {
   const double fs = 48000.;
   // One LFO on `target`, a square at depth 1: its two halves differ in what
-  // the target moves, and nothing else does
-  auto halves = [&](ModTarget target, auto measure) {
+  // the target moves, and nothing else does. The four sources are alike,
+  // unless `setup` makes them differ
+  auto halves = [&](ModTarget target, auto measure, auto setup) {
     Rig rig(fs);
     auto p = plain(BankId::SineSaw, 0.5f);
     p.x = 0.f;
     for(int s = 1; s < kSources; s++)
       p.src[std::size_t(s)] = p.src[0];
     p.lfos[0] = LfoParams{target, LfoShape::Square, 0.4f, 1.f, 0.f, 0.f};
+    setup(p);
     p.sanitize();
     rig.on(57, 100, p);
     rig.run(0.05, p);
@@ -829,29 +941,525 @@ TEST_CASE("Each LFO target moves what it names", "[viceversa][lfo]")
     const auto lo = measure(rig.run(0.1, p)); // second half: -1
     return std::pair{hi, lo};
   };
+  auto same = [](Params&) {};
   auto rms = [](const std::vector<float>& v) {
     double e = 0.;
     for(float x : v)
       e += double(x) * x;
     return std::sqrt(e / double(v.size()));
   };
-  // Zero crossings: the pitch
+  // Zero crossings: the pitch, or the harmonic sounding
   auto crossings = [](const std::vector<float>& v) {
     int n = 0;
     for(std::size_t i = 1; i < v.size(); i++)
       n += (v[i - 1] < 0.f) != (v[i] < 0.f);
     return double(n);
   };
+  // What is above 2 kHz, against the whole
+  auto bright = [&](const std::vector<float>& v) {
+    const auto pw = power(v, 4096);
+    double hi = 0., all = 0.;
+    for(std::size_t i = 1; i < pw.size(); i++)
+    {
+      all += pw[i];
+      if(double(i) * fs / 4096. > 2000.)
+        hi += pw[i];
+    }
+    return hi / all;
+  };
   {
-    const auto [hi, lo] = halves(ModTarget::Pitch, crossings);
+    const auto [hi, lo] = halves(ModTarget::Pitch, crossings, same);
     CHECK(hi / lo == Catch::Approx(4.).epsilon(0.1)); // ±1 octave
   }
   {
-    const auto [hi, lo] = halves(ModTarget::Level, rms);
+    const auto [hi, lo] = halves(ModTarget::Level, rms, same);
     CHECK(lo < 0.01 * hi); // down to silence
   }
   {
-    const auto [hi, lo] = halves(ModTarget::Off, rms);
+    const auto [hi, lo] = halves(ModTarget::Off, rms, same);
     CHECK(hi == Catch::Approx(lo).epsilon(0.05));
   }
+  {
+    // Cutoff ±4 octaves around 1 kHz
+    const auto [hi, lo] = halves(ModTarget::Cutoff, bright, [](Params& p) {
+      for(auto& s : p.src)
+        s.frame = 1.f; // a saw
+      p.cutoff = 1000.f;
+    });
+    CHECK(hi > 30. * lo);
+  }
+  {
+    // X: from the A corner to C, two octaves apart; Y: from B to D, likewise
+    auto spread = [](Params& p) {
+      const float coarse[kSources] = {0.f, 12.f, 24.f, -12.f};
+      for(int s = 0; s < kSources; s++)
+        p.src[std::size_t(s)].coarse = coarse[s];
+      for(auto& s : p.src)
+        s.frame = 0.f; // sines
+    };
+    const auto [xhi, xlo] = halves(ModTarget::X, crossings, spread);
+    CHECK(xhi / xlo == Catch::Approx(4.).epsilon(0.1)); // C (24) over A (0)
+    const auto [yhi, ylo] = halves(ModTarget::Y, crossings, spread);
+    CHECK(yhi / ylo == Catch::Approx(4.).epsilon(0.1)); // B (12) over D (-12)
+  }
+  // Each source's own: heard alone, at its corner, it moves; the others not
+  const float cornerX[kSources] = {-1.f, 0.f, 1.f, 0.f};
+  const float cornerY[kSources] = {0.f, 1.f, 0.f, -1.f};
+  for(int which = 0; which < kSources; which++)
+  {
+    for(int heard = 0; heard < kSources; heard++)
+    {
+      auto corner = [&](BankId bank, float frame) {
+        return [&, bank, frame](Params& p) {
+          p.x = cornerX[heard];
+          p.y = cornerY[heard];
+          for(auto& s : p.src)
+          {
+            s.bank = bank;
+            s.frame = frame;
+          }
+        };
+      };
+      INFO("target source " << which << ", heard " << heard);
+      const auto [phi, plo] = halves(
+          ModTarget(int(ModTarget::PitchA) + which), crossings, corner(BankId::SineSaw, 0.f));
+      if(which == heard)
+        CHECK(phi / plo == Catch::Approx(4.).epsilon(0.1));
+      else
+        CHECK(phi / plo == Catch::Approx(1.).epsilon(0.02));
+      // Frame: one harmonic at a time, the 24th, then the 1st
+      const auto [fhi, flo] = halves(
+          ModTarget(int(ModTarget::FrameA) + which), crossings,
+          corner(BankId::HarmonicSweep, 0.5f));
+      if(which == heard)
+        CHECK(fhi / flo > 15.);
+      else
+        CHECK(fhi / flo == Catch::Approx(1.).epsilon(0.02));
+    }
+  }
+}
+
+namespace
+{
+//! A sine at `cycles` per sample's amplitude in x, through a Hann window
+double amplitudeAt(const std::vector<float>& x, double cycles)
+{
+  std::complex<double> acc{};
+  double wsum = 0.;
+  const std::size_t n = x.size();
+  for(std::size_t i = 0; i < n; i++)
+  {
+    const double w = 0.5 - 0.5 * std::cos(2. * std::numbers::pi * double(i) / double(n));
+    acc += w * double(x[i]) * std::polar(1., -2. * std::numbers::pi * cycles * double(i));
+    wsum += w;
+  }
+  return 2. * std::abs(acc) / wsum;
+}
+
+double rmsOf(const std::vector<float>& v, std::size_t from = 0)
+{
+  double e = 0.;
+  for(std::size_t i = from; i < v.size(); i++)
+    e += double(v[i]) * v[i];
+  return std::sqrt(e / double(std::max<std::size_t>(1, v.size() - from)));
+}
+
+void cc(Rig& rig, int number, int value, const Params& p)
+{
+  rig.send(0xB0, (unsigned char)number, (unsigned char)value, p);
+}
+}
+
+TEST_CASE("The lanes' read is the scalar read's", "[viceversa][bank]")
+{
+  std::mt19937 rng(5);
+  std::uniform_real_distribution<float> u(0.f, 1.f);
+  for(BankId id : {BankId::SineSaw, BankId::Sync, BankId::Strings})
+  {
+    const auto& b = builtinBanks()[std::size_t(id)];
+    double worst = 0.;
+    for(int trial = 0; trial < 20000; trial++)
+    {
+      std::array<Mip, kLanes> mip;
+      alignas(16) std::array<float, kLanes> frame, x;
+      for(std::size_t l = 0; l < kLanes; l++)
+      {
+        mip[l] = {int(u(rng) * kLevels) % kLevels, u(rng) < 0.5f ? 0.f : u(rng)};
+        frame[l] = u(rng) * float(b.frames() - 1);
+        x[l] = u(rng) * 0.999999f;
+      }
+      if(trial % 7 == 0)
+        frame[0] = float(b.frames() - 1); // the last frame, alone
+      Bank::Lanes t;
+      b.lanes(t, mip);
+      const vec4 got = Bank::read(t, kfr::read<kLanes, true>(frame.data()),
+                                  kfr::read<kLanes, true>(x.data()));
+      for(std::size_t l = 0; l < kLanes; l++)
+      {
+        const Mip m{mip[l].level, mip[l].level >= kLevels - 1 ? 0.f : mip[l].frac};
+        worst = std::max(worst, double(std::abs(got[l] - b.read(frame[l], m, x[l]))));
+      }
+    }
+    INFO("bank " << int(id));
+    CHECK(worst < 2e-6);
+  }
+}
+
+TEST_CASE("The mip levels keep the top of the spectrum", "[viceversa][bank]")
+{
+  // The saw: each harmonic read at a note's level is the full table's, at
+  // 12 to 14 kHz too, except over the last sixth of an octave before a
+  // level switches, where it fades to the next
+  const double fs = 48000.;
+  const auto& bank = builtinBanks()[std::size_t(BankId::SineSaw)];
+  const int last = bank.frames() - 1;
+  const int n0 = levelSize(0);
+  std::vector<std::complex<double>> a(static_cast<std::size_t>(n0));
+  for(int i = 0; i < n0; i++)
+    a[std::size_t(i)] = bank.table(last, 0)[i + 1];
+  fftc(a);
+  int full = 0, faded = 0;
+  for(double note = 57.; note <= 93.; note += 0.25)
+  {
+    const double f0 = 440. * std::exp2((note - 69.) / 12.);
+    const float dx = float(f0 / fs);
+    const Mip mip = Bank::levelFor(Bank::octavesOver(dx));
+    (mip.frac > 0.f ? faded : full)++;
+    if(mip.frac > 0.f)
+      continue;
+    // The highest harmonic at 12 to 14 kHz that the level has
+    const int h = std::min(levelHarmonics(mip.level), int(14000. / f0));
+    if(h * f0 < 12000.)
+      continue;
+    std::vector<float> x(16384);
+    Bank::Lanes t;
+    bank.lanes(t, {mip, mip, mip, mip});
+    float ph = 0.f;
+    for(auto& v : x)
+    {
+      v = Bank::read(t, vec4(float(last)), vec4(ph))[0];
+      ph += dx;
+      ph -= ph >= 1.f ? 1.f : 0.f;
+    }
+    const double want = std::abs(a[std::size_t(h)]) * 2. / n0;
+    const double got = amplitudeAt(x, double(h) * dx);
+    INFO("note " << note << " harmonic " << h << " at " << h * f0 << " Hz");
+    CHECK(std::abs(20. * std::log10(got / want)) < 1.);
+  }
+  // Five sixths of the notes read one level only
+  CHECK(double(full) / double(full + faded) > 0.8);
+  // A4: up to its 32nd harmonic, 14 kHz, as it was not
+  CHECK(Bank::levelFor(Bank::octavesOver(440.f / 48000.f)).frac == 0.f);
+}
+
+TEST_CASE("The drive does not alias", "[viceversa][aliasing]")
+{
+  // A saw at full drive, the filter open: the saturator's harmonics fold
+  // back from twice the rate
+  for(int note : {72, 84, 96})
+  {
+    const double fs = 48000.;
+    Rig rig(fs);
+    auto p = plain(BankId::SineSaw, 1.f);
+    p.drive = 1.f;
+    rig.on(note, 127, p);
+    const auto x = tail(rig.run(1.2, p), std::size_t(0.2 * fs));
+    const double f = 440. * std::exp2((note - 69) / 12.);
+    const double asr = aliasToSignal(x, f, fs, 16000.);
+    std::printf("viceversa saw at %.0f Hz, drive 1: aliasing %.1f dB\n", f, asr);
+    INFO("note " << note);
+    CHECK(asr < (note == 96 ? -54. : note == 84 ? -57. : -60.));
+  }
+}
+
+TEST_CASE("The filter's sweep, the frames' too, are smooth", "[viceversa][filter]")
+{
+  // A fast frame sweep moves the frame position every sample, not every
+  // control period
+  const double fs = 48000.;
+  Rig rig(fs);
+  auto p = plain(BankId::PulseWidth, 0.5f);
+  p.lfos[0] = LfoParams{ModTarget::FrameA, LfoShape::Sine, 0.05f, 0.5f, 0.f, 0.f};
+  p.sanitize();
+  rig.on(48, 127, p);
+  rig.run(0.01, p);
+  std::vector<float> pos;
+  float l, r;
+  for(int i = 0; i < 4800; i++)
+  {
+    rig.s->render(p, &l, &r, 1);
+    pos.push_back(rig.s->groups[0].frame[0].value[0]);
+  }
+  std::vector<double> d;
+  for(std::size_t i = 1; i < pos.size(); i++)
+    d.push_back(std::abs(double(pos[i]) - pos[i - 1]));
+  auto sorted = d;
+  std::sort(sorted.begin(), sorted.end());
+  const double median = sorted[sorted.size() / 2];
+  CHECK(median > 0.);
+  CHECK(sorted.back() < 3. * median + 1e-3);
+}
+
+TEST_CASE("A new voice's filter starts where it is", "[viceversa][filter]")
+{
+  // A voice ends; the next in its lane, far higher with the key tracking,
+  // does not ramp its cutoff from the last one's
+  Rig rig(48000.);
+  auto p = plain(BankId::SineSaw, 1.f);
+  p.cutoff = 500.f;
+  p.keyTrack = 1.f;
+  p.aR = 0.01f;
+  rig.on(30, 127, p);
+  rig.run(0.1, p);
+  rig.off(30, p);
+  rig.run(0.5, p);
+  REQUIRE(rig.s->activeVoices() == 0);
+  rig.on(100, 127, p);
+  float l, r;
+  rig.s->render(p, &l, &r, 1);
+  CHECK(rig.s->groups[0].G.step[0] == 0.f);
+  CHECK(rig.s->groups[0].G.value[0] > 0.1f);
+  CHECK(rig.s->groups[0].k.step[0] == 0.f);
+}
+
+TEST_CASE("prepare() at the same rate keeps what sounds", "[viceversa][robustness]")
+{
+  const double fs = 48000.;
+  Rig rig(fs);
+  auto p = plain(BankId::SineSaw, 0.f); // a sine
+  rig.on(45, 127, p);
+  const auto before = rig.run(0.2, p);
+  REQUIRE(rig.s->activeVoices() == 1);
+  // The host's buffers grew: same rate, so the note goes on, unbroken
+  rig.s->prepare(fs);
+  CHECK(rig.s->activeVoices() == 1);
+  const auto after = rig.run(0.05, p);
+  double step = 0.;
+  for(std::size_t i = 1; i < after.size(); i++)
+    step = std::max(step, std::abs(double(after[i]) - after[i - 1]));
+  CHECK(std::abs(double(after[0]) - before.back()) < 1.5 * step);
+  CHECK(rmsOf(after) > 0.1);
+  // A new rate starts afresh
+  rig.s->prepare(96000.);
+  CHECK(rig.s->activeVoices() == 0);
+  CHECK(rig.s->sampleRate() == 96000.);
+}
+
+TEST_CASE("A note released in another play mode leaves no voice held",
+          "[viceversa][robustness]")
+{
+  auto p = plain(BankId::SineSaw, 0.f);
+  p.aR = 0.05f;
+  // Held in Mono, released in Poly, then Mono again
+  {
+    Rig rig;
+    p.play = PlayMode::Mono;
+    rig.on(60, 100, p);
+    rig.run(0.05, p);
+    p.play = PlayMode::Poly;
+    rig.off(60, p);
+    rig.run(0.05, p);
+    p.play = PlayMode::Mono;
+    rig.on(64, 100, p);
+    rig.run(0.05, p);
+    rig.off(64, p);
+    rig.run(0.5, p);
+    CHECK(rig.s->activeVoices() == 0);
+  }
+  // Held across Mono, Poly, Mono, released in Mono
+  {
+    Rig rig;
+    p.play = PlayMode::Mono;
+    rig.on(60, 100, p);
+    rig.run(0.05, p);
+    p.play = PlayMode::Poly;
+    rig.run(0.05, p);
+    p.play = PlayMode::Mono;
+    rig.on(64, 100, p);
+    rig.run(0.05, p);
+    rig.off(64, p);
+    rig.off(60, p);
+    rig.run(0.5, p);
+    CHECK(rig.s->activeVoices() == 0);
+  }
+}
+
+TEST_CASE("All notes off and reset all controllers lift the pedal", "[viceversa][robustness]")
+{
+  const double fs = 48000.;
+  auto p = plain(BankId::SineSaw, 0.f);
+  // CC 120 and 123: a note after them ends when released
+  for(int number : {120, 123})
+  {
+    Rig rig(fs);
+    cc(rig, 64, 127, p);
+    cc(rig, number, 0, p);
+    rig.on(60, 100, p);
+    rig.run(0.01, p);
+    rig.off(60, p);
+    INFO("CC " << number);
+    CHECK(!rig.s->voices[0].gate());
+  }
+  // CC 121: the pedal's notes released, the bend back to none
+  Rig rig(fs);
+  cc(rig, 64, 127, p);
+  rig.on(62, 100, p);
+  rig.off(62, p);
+  REQUIRE(rig.s->voices[0].gate());
+  rig.send(0xE0, 0x7F, 0x7F, p);
+  cc(rig, 121, 0, p);
+  CHECK(!rig.s->voices[0].gate());
+  rig.run(1., p);
+  rig.on(69, 127, p);
+  const auto x = tail(rig.run(0.5, p), 4800);
+  CHECK(std::abs(1200. * std::log2(measureFrequency(x, 440., fs) / 440.)) < 1.);
+  // And a new note is not held by the pedal any more
+  rig.off(69, p);
+  CHECK(!rig.s->voices[0].gate());
+}
+
+TEST_CASE("A note released while it waits for its voice, pedal down, still sounds",
+          "[viceversa][robustness]")
+{
+  Rig rig(48000.);
+  auto p = plain(BankId::SineSaw, 0.f);
+  p.voices = 1;
+  p.sanitize();
+  rig.on(60, 100, p);
+  rig.run(0.05, p);
+  cc(rig, 64, 127, p);
+  rig.on(62, 100, p); // steals the only voice
+  rig.off(62, p);     // before it got it
+  rig.run(0.05, p);
+  const auto& v = rig.s->voices[0];
+  CHECK(v.state == Synth::Voice::Active);
+  CHECK(v.note == 62);
+  CHECK(v.sustained);
+  cc(rig, 64, 0, p);
+  CHECK(!v.gate());
+  // Released before the steal with the pedal lifted too: dropped
+  rig.on(64, 100, p);
+  cc(rig, 64, 127, p);
+  rig.off(64, p);
+  cc(rig, 64, 0, p);
+  rig.run(0.05, p);
+  CHECK(rig.s->voices[0].note != 64);
+}
+
+TEST_CASE("A long glide at a high rate gets there", "[viceversa][robustness]")
+{
+  const double fs = 384000.;
+  Rig rig(fs);
+  auto p = plain(BankId::SineSaw, 0.f);
+  p.play = PlayMode::Mono;
+  p.glide = 2.f;
+  p.sanitize();
+  rig.on(60, 100, p);
+  rig.run(0.01, p);
+  rig.on(72, 100, p);
+  rig.run(10., p);
+  CHECK(rig.s->voices[0].pitch == 72.);
+}
+
+TEST_CASE("The vector's loop span can move under a voice", "[viceversa][vector]")
+{
+  VecEnvSpec s;
+  s.x = {-1.f, 0.f, 1.f, 0.f, 0.5f};
+  s.y = {0.f, 1.f, 0.f, -1.f, 0.f};
+  s.time = {0.1, 0.1, 0.1, 0.1};
+  // Back and forth over 0..2, the voice heading down; then 2..4
+  s.setLoop(VecLoop::BackAndForth, 0, 2);
+  VecEnvState e;
+  e.start(s);
+  e.advance(s, 0.25); // past 2, on its way back to 1
+  s.setLoop(VecLoop::BackAndForth, 2, 4);
+  bool moved = false;
+  float lastX = e.x;
+  for(int i = 0; i < 400; i++)
+  {
+    e.advance(s, 0.01);
+    CHECK(e.a >= 0);
+    CHECK(e.a <= 4);
+    CHECK(e.b >= 0);
+    CHECK(e.b <= 4);
+    moved |= i > 200 && e.x != lastX;
+    lastX = e.x;
+  }
+  CHECK(moved);
+  CHECK(e.a >= 2);
+  CHECK(e.b >= 2);
+  // Over 0..4, heading up to 4; then 0..2: back down into it
+  s.setLoop(VecLoop::BackAndForth, 0, 4);
+  e.start(s);
+  e.advance(s, 0.35);
+  s.setLoop(VecLoop::BackAndForth, 0, 2);
+  for(int i = 0; i < 400; i++)
+  {
+    e.advance(s, 0.01);
+    CHECK(e.b <= 4);
+  }
+  CHECK(e.a <= 2);
+  CHECK(e.b <= 2);
+  // Round, beyond its new end: back to its start, not on to 4 and done
+  s.setLoop(VecLoop::Round, 0, 4);
+  e.start(s);
+  e.advance(s, 0.35);
+  s.setLoop(VecLoop::Round, 0, 2);
+  e.advance(s, 1.);
+  CHECK(!e.done);
+  CHECK(e.b <= 2);
+}
+
+TEST_CASE("The spread crosses 0 without a click", "[viceversa][spread]")
+{
+  const double fs = 48000.;
+  Rig rig(fs);
+  auto p = plain(BankId::SineSaw, 0.f); // sines
+  for(auto& s : p.src)
+    s.bank = BankId::SineSaw;
+  p.x = 0.f;
+  p.spread = 0.f;
+  p.sanitize();
+  rig.on(48, 127, p);
+  std::vector<float> l(static_cast<std::size_t>(fs * 0.4)), r(l.size());
+  const std::size_t half = l.size() / 2;
+  for(std::size_t i = 0; i < l.size(); i += 256)
+  {
+    if(i >= half)
+      p.spread = 0.01f;
+    rig.s->render(p, l.data() + i, r.data() + i, int(std::min<std::size_t>(256, l.size() - i)));
+  }
+  // The largest step from a sample to the next: where the spread left 0,
+  // and elsewhere
+  for(auto* x : {&l, &r})
+  {
+    double elsewhere = 0., there = 0.;
+    for(std::size_t i = 4800; i < x->size(); i++)
+    {
+      const double d = std::abs(double((*x)[i]) - (*x)[i - 1]);
+      double& m = i >= half && i < half + 256 ? there : elsewhere;
+      m = std::max(m, d);
+    }
+    CHECK(there < 1.1 * elsewhere);
+  }
+}
+
+TEST_CASE("Unconnected, the processor counts nothing", "[viceversa][ui]")
+{
+  ViceVersa vv;
+  vv.prepare({.frames = 512, .rate = 48000.});
+  std::vector<float> l(512), r(512);
+  float* ch[2]{l.data(), r.data()};
+  vv.outputs.audio.samples = ch;
+  for(int i = 0; i < 1000; i++)
+    vv({.frames = 512});
+  CHECK(vv.sinceSent == 0);
+  CHECK(vv.sinceResent == 0);
+  // Connected: a message twice a second, even when nothing moves
+  int sent = 0;
+  vv.send_message = [&](LivePoints) { sent++; };
+  for(int i = 0; i < 188; i++) // two seconds
+    vv({.frames = 512});
+  CHECK(sent >= 3);
+  CHECK(sent <= 4);
 }

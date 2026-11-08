@@ -187,9 +187,12 @@ avnd_score_plugin_add(
     ViceVersa/ViceVersaDsp.hpp
     ViceVersa/VectorWidget.hpp
     ViceVersa/Dsp/Banks.hpp
+    ViceVersa/Dsp/Base.hpp
+    ViceVersa/Dsp/Halfband.hpp
     ViceVersa/Dsp/Ladder.hpp
     ViceVersa/Dsp/Modulation.hpp
     ViceVersa/Dsp/SampledBanks.hpp
+    ViceVersa/Dsp/Simd.hpp
     ViceVersa/Dsp/Vector.hpp
     ViceVersa/Dsp/Wavetable.hpp
   TARGET viceversa

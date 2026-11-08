@@ -19,6 +19,7 @@
 #include <array>
 #include <functional>
 #include <string_view>
+#include <utility>
 
 namespace viceversa
 {
@@ -28,10 +29,11 @@ static_assert(avnd::enum_names<MixLaw>().size() == kMixLawCount);
 static_assert(avnd::enum_names<LfoShape>().size() == kLfoShapeCount);
 static_assert(avnd::enum_names<ModTarget>().size() == kModTargetCount);
 static_assert(avnd::enum_names<PlayMode>().size() == kPlayModeCount);
+static_assert(avnd::enum_names<VecLoop>().size() == kVecLoopCount);
+static_assert(avnd::enum_names<LoopFrom>().size() == kLoopFromCount);
+static_assert(avnd::enum_names<LoopTo>().size() == kLoopToCount);
 #endif
 
-inline constexpr halp::look small_knob{
-    .size = halp::control_size::compact, .widget = halp::control_widget::knob};
 consteval halp::look small_knob_as(std::string_view name)
 {
   auto l = halp::label_as(name);
@@ -65,18 +67,11 @@ inline constexpr std::array<std::string_view, kPlayModeCount> kPlayModeLabels{
     "Poly", "Mono", "Legato"};
 
 //! The vector envelope's loop: its mode, and the points it goes between
-enum class LoopFrom
-{
-  P0, P1, P2, P3
-};
-enum class LoopTo
-{
-  P1, P2, P3, P4
-};
-inline constexpr std::array<std::string_view, 3> kVecLoopLabels{
+inline constexpr std::array<std::string_view, kVecLoopCount> kVecLoopLabels{
     "Off", "Round", "Back and forth"};
-inline constexpr std::array<std::string_view, 4> kLoopFromLabels{"0", "1", "2", "3"};
-inline constexpr std::array<std::string_view, 4> kLoopToLabels{"1", "2", "3", "4"};
+inline constexpr std::array<std::string_view, kLoopFromCount> kLoopFromLabels{
+    "0", "1", "2", "3"};
+inline constexpr std::array<std::string_view, kLoopToCount> kLoopToLabels{"1", "2", "3", "4"};
 
 #define VICEVERSA_COMBO(NAME, ENUM, LABELS, INIT)                                        \
   struct : halp::combobox_t<NAME, ENUM>                                             \
@@ -195,7 +190,7 @@ public:
     halp::knob_f32<"CC74 X", halp::range{-1., 1., 0.5}> timbre_x;
 
     halp::knob_f32<"Spread", halp::range{0., 1., 0.3}> spread;
-    halp::knob_f32<"Level", halp::range{0., 2., 0.7}> level;
+    halp::knob_f32<"Level", halp::range{0., 4., 0.7}> level;
     halp::spinbox_i32<"Voices", halp::range{1, kMaxVoices, kMaxVoices}> voices;
   } inputs;
 
@@ -206,16 +201,22 @@ public:
 
   Synth synth;
 
-  //! The voices' points, to the editor, about 30 times a second
+  /* The voices' points, to the editor, about 30 times a second when they
+   * move, and twice a second anyway: the host drops messages when its queue
+   * is full, and a lost last one would leave the editor's dots where they
+   * were. */
   std::function<void(LivePoints)> send_message;
   LivePoints sent;
-  int sinceSent{0};
+  int sinceSent{0};   // samples since the last look
+  int sinceResent{0}; // since the last message
   int sendEvery{1600};
+  int resendEvery{24000};
 
   void prepare(halp::setup s)
   {
     synth.prepare(s.rate);
     sendEvery = std::max(1, int(s.rate / 30.));
+    resendEvery = std::max(1, int(s.rate / 2.));
   }
 
   Params params() const noexcept
@@ -234,7 +235,7 @@ public:
     p.y = in.position.value.y;
     p.law = in.law.value;
     p.vecEnv = VecEnvSpec::decode(in.vec_env.value, VecEnvSpec::centred());
-    p.vecEnv.setLoop(in.vec_loop.value, int(in.loop_from.value), int(in.loop_to.value) + 1);
+    p.vecEnv.setLoop(in.vec_loop.value, in.loop_from.value, in.loop_to.value);
     p.vecEnv.time = {in.move1.value, in.move2.value, in.move3.value, in.move4.value};
     p.vecEnv.release = in.move_release.value;
     p.vecEnvDepth = in.vec_depth.value;
@@ -311,25 +312,32 @@ public:
     if(pos < frames)
       synth.render(p, l + pos, r + pos, frames - pos);
 
-    sinceSent += frames;
-    if(send_message && sinceSent >= sendEvery)
+    if(!send_message)
+      return;
+    // Saturated: a host's tick can be as long as it likes
+    sinceSent = std::min(sinceSent + std::min(frames, sendEvery), sendEvery);
+    sinceResent = std::min(sinceResent + std::min(frames, resendEvery), resendEvery);
+    if(sinceSent >= sendEvery)
     {
       sinceSent = 0;
-      if(auto now = synth.livePoints(); now != sent)
+      if(auto now = synth.livePoints(); now != sent || sinceResent >= resendEvery)
       {
         sent = now;
+        sinceResent = 0;
         send_message(now);
       }
     }
   }
 
-  //! An LFO's controls, greyed out while it moves nothing
+  //! An LFO's controls, greyed out while it moves nothing: every target
+  //! but Off, the first
+  static_assert(int(ModTarget::Off) == 0);
+  template <auto Target, std::size_t... I>
+  static auto lfoOn(std::index_sequence<I...>)
+      -> halp::enabled_when<Target, ModTarget(I + 1)...>;
   template <auto Target>
-  using lfo_on = halp::enabled_when<
-      Target, ModTarget::X, ModTarget::Y, ModTarget::Pitch, ModTarget::PitchA,
-      ModTarget::PitchB, ModTarget::PitchC, ModTarget::PitchD, ModTarget::FrameA,
-      ModTarget::FrameB, ModTarget::FrameC, ModTarget::FrameD, ModTarget::Cutoff,
-      ModTarget::Level>;
+  using lfo_on
+      = decltype(lfoOn<Target>(std::make_index_sequence<std::size_t(kModTargetCount - 1)>{}));
 
   // No UI item may be called x or y: the layout reads those as its position
   struct ui
