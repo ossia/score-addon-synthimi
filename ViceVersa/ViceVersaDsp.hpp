@@ -362,6 +362,7 @@ public:
     tickLeft = 0;
     modWheel = 0.f;
     output.prepare(fs);
+    noiseExp = float(kNoiseRate / fs);
     incBase = float(std::log2(440. / fs));
     mipBase = float(std::log2(440. * kTopHarmonic / (double(kSafeCycles) * fs)));
   }
@@ -533,6 +534,8 @@ public:
 
 private:
   static constexpr float kPerVoice = 0.35f;
+  //! The rate the noise bank's colours are set for
+  static constexpr double kNoiseRate = 48000.;
 
   struct ChannelState
   {
@@ -1036,8 +1039,9 @@ private:
       if(b && b->noise())
       {
         // White noise, a one-pole darkening it as the frame position rises,
-        // its power kept
-        const float a = 0.995f * pos;
+        // its power kept. The pole is 0.995 * position at kNoiseRate; at
+        // another rate, the same time constant: the corner stays in Hz.
+        const float a = std::pow(0.995f * pos, noiseExp);
         g.noisePole[si].toward(l, a, n, jump);
         g.noiseGain[si].toward(l, 0.866f * std::sqrt((1.f + a) / (1.f - a)), n, jump);
       }
@@ -1166,6 +1170,7 @@ private:
   int tickLeft{0};
   float modWheel{0.f};
   float drive{1.f};
+  float noiseExp{1.f}; // kNoiseRate / fs: a pole at kNoiseRate to one at fs
   float incBase{0.f}, mipBase{0.f}; // log2 of A4's increment, and its octaves over level 0
   synthimi::OutputStage output;
 };
