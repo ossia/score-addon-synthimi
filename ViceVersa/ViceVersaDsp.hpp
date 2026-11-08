@@ -493,8 +493,7 @@ public:
     drive = 0.05f + 3.95f * p.drive * p.drive;
     for(auto& g : groups)
       flushGroup(g);
-    flushTiny(output.dcLy);
-    flushTiny(output.dcRy);
+    output.flushDenormals();
 
     int done = 0;
     while(done < frames)
