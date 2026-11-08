@@ -13,7 +13,7 @@
  * times of the moves are menus and knobs of their own.
  */
 
-#include <ViceVersa/Dsp/Vector.hpp>
+#include <ViceVersa/ViceVersaDsp.hpp>
 #include <avnd/concepts/painter.hpp>
 #include <halp/custom_widgets.hpp>
 #include <halp/layout.hpp>
@@ -22,11 +22,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdio>
 #include <functional>
 #include <string>
 #include <tuple>
-#include <type_traits>
 #include <vector>
 
 namespace viceversa
@@ -111,6 +109,7 @@ struct VectorPad
   } target{Points};
   int drag{-1};          // a point
   bool dragging{false};  // the Position
+  double grabX{0.}, grabY{0.}; // from the cursor to the dragged point's centre
 
   auto& envelope() { return std::get<0>(transactions); }
   auto& position() { return std::get<1>(transactions); }
@@ -126,12 +125,13 @@ struct VectorPad
       next.x = spec.x;
       next.y = spec.y;
     }
-    next.setLoop(VecLoop(std::get<2>(values)), std::get<3>(values), std::get<4>(values) + 1);
+    next.setLoop(
+        VecLoop(std::get<2>(values)), LoopFrom(std::get<3>(values)), LoopTo(std::get<4>(values)));
     spec = next;
   }
 
-  static double px(float x) { return cx() + double(x) * radius(); }
-  static double py(float y) { return cy() - double(y) * radius(); }
+  [[nodiscard]] static double px(float x) noexcept { return cx() + double(x) * radius(); }
+  [[nodiscard]] static double py(float y) noexcept { return cy() - double(y) * radius(); }
 
   // ---- painting -------------------------------------------------------
   void paint(avnd::painter auto ctx)
@@ -302,7 +302,7 @@ struct VectorPad
   // ---- interaction ----------------------------------------------------
   //! The point of the diamond under the cursor: outside it, the mix would
   //! not change
-  static Point at(double x, double y)
+  [[nodiscard]] static Point at(double x, double y) noexcept
   {
     float vx = float((x - cx()) / radius()), vy = float((cy() - y) / radius());
     const float m = std::abs(vx) + std::abs(vy);
@@ -331,7 +331,7 @@ struct VectorPad
   }
 
   //! The drag target's button under the cursor, -1 if none
-  static int buttonAt(double x, double y)
+  [[nodiscard]] static int buttonAt(double x, double y) noexcept
   {
     for(int i = 0; i < 2; i++)
       if(x >= buttonX() && x <= buttonX() + kButton && y >= buttonY(i)
@@ -340,13 +340,17 @@ struct VectorPad
     return -1;
   }
 
-  static bool inDiamond(double x, double y)
+  [[nodiscard]] static bool inDiamond(double x, double y) noexcept
   {
     return std::abs(x - cx()) + std::abs(y - cy()) <= radius() + kHit;
   }
 
-  bool mouse_press(double x, double y)
+  //! Only the left button starts a gesture
+  bool mouse_press(const auto& e)
   {
+    if(e.button != e.left)
+      return false;
+    const double x = e.x, y = e.y;
     sync();
     if(const int b = buttonAt(x, y); b >= 0)
     {
@@ -370,7 +374,11 @@ struct VectorPad
         const auto ii = std::size_t(i);
         if(std::hypot(x - px(spec.x[ii]), y - py(spec.y[ii])) <= kHit)
         {
+          // Where it was grabbed stays under the cursor: the point does not
+          // jump to it
           drag = i;
+          grabX = px(spec.x[ii]) - x;
+          grabY = py(spec.y[ii]) - y;
           if(envelope().start)
             envelope().start();
           return true;
@@ -389,7 +397,7 @@ struct VectorPad
     }
     if(drag < 0)
       return false;
-    const auto p = at(x, y);
+    const auto p = at(x + grabX, y + grabY);
     spec.x[std::size_t(drag)] = p.x;
     spec.y[std::size_t(drag)] = p.y;
     send();
@@ -407,10 +415,18 @@ struct VectorPad
     return false;
   }
 
+  //! The host's, on transport stop: a gesture in progress is undone, the
+  //! voices' points cleared
   void reset()
   {
+    if(dragging && position().rollback)
+      position().rollback();
+    if(drag >= 0 && envelope().rollback)
+      envelope().rollback();
     drag = -1;
     dragging = false;
+    live = {};
+    repaint();
   }
 };
 }

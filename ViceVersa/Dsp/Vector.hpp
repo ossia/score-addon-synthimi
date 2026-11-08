@@ -23,6 +23,8 @@
  * [0, 1]: [x0, y0, ..., x4, y4], positions as (v + 1) / 2.
  */
 
+#include <ViceVersa/Dsp/Base.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -38,25 +40,54 @@ struct Weights
   float a, b, c, d;
 };
 
-inline Weights mixLinear(float x, float y) noexcept
+[[nodiscard]] inline Weights mixLinear(float x, float y) noexcept
 {
   const float u = std::clamp(0.5f * (x + y + 1.f), 0.f, 1.f);
   const float v = std::clamp(0.5f * (y - x + 1.f), 0.f, 1.f);
   return {(1.f - u) * v, u * v, u * (1.f - v), (1.f - u) * (1.f - v)};
 }
 
-inline Weights mixEqualPower(float x, float y) noexcept
+[[nodiscard]] inline Weights mixEqualPower(float x, float y) noexcept
 {
   const auto w = mixLinear(x, y);
   return {std::sqrt(w.a), std::sqrt(w.b), std::sqrt(w.c), std::sqrt(w.d)};
 }
 
+// Stored by index in presets: append only
 enum class VecLoop : int
 {
   Off,
   Round,
   BackAndForth
 };
+inline constexpr int kVecLoopCount = 3;
+
+//! The loop's menus: the point it starts from, the point it goes to
+enum class LoopFrom : int
+{
+  P0,
+  P1,
+  P2,
+  P3
+};
+enum class LoopTo : int
+{
+  P1,
+  P2,
+  P3,
+  P4
+};
+inline constexpr int kLoopFromCount = 4;
+inline constexpr int kLoopToCount = 4;
+//! Loop To's items start at point 1
+[[nodiscard]] constexpr int loopToPoint(LoopTo item) noexcept
+{
+  return int(item) + 1;
+}
+[[nodiscard]] constexpr LoopTo loopToItem(int point) noexcept
+{
+  return LoopTo(point - 1);
+}
 
 struct VecEnvSpec
 {
@@ -68,7 +99,7 @@ struct VecEnvSpec
 
   //! Around the diamond, a second per move, back to the centre on release:
   //! a new instance shows at once what the vector does
-  static VecEnvSpec centred()
+  [[nodiscard]] static VecEnvSpec centred() noexcept
   {
     VecEnvSpec s;
     s.x = {-0.6f, 0.f, 0.6f, 0.f, 0.f};
@@ -76,7 +107,7 @@ struct VecEnvSpec
     return s;
   }
 
-  static VecEnvSpec decode(const std::vector<float>& v, const VecEnvSpec& fallback) noexcept
+  [[nodiscard]] static VecEnvSpec decode(const std::vector<float>& v, const VecEnvSpec& fallback) noexcept
   {
     if(v.size() != std::size_t(kVecEnvSize))
       return fallback;
@@ -91,16 +122,35 @@ struct VecEnvSpec
     return s;
   }
 
-  //! The loop, from its menus: the span from..to, at least one move
+  //! The loop: the span from..to, at least one move
   void setLoop(VecLoop mode, int loopFrom, int loopTo) noexcept
   {
-    loop = (mode >= VecLoop::Off && mode <= VecLoop::BackAndForth) ? mode : VecLoop::Off;
+    loop = saneEnum(mode, kVecLoopCount);
     from = std::clamp(loopFrom, 0, 3);
     to = std::clamp(loopTo, from + 1, 4);
   }
+  //! From its menus
+  void setLoop(VecLoop mode, LoopFrom loopFrom, LoopTo loopTo) noexcept
+  {
+    setLoop(mode, int(loopFrom), loopToPoint(loopTo));
+  }
+
+  //! Times and points in range, as their ports have them; NaN is the default
+  void sanitize() noexcept
+  {
+    for(auto& t : time)
+      t = sane(t, 0.001, 20., 1.);
+    release = sane(release, 0.001, 20., 0.3);
+    for(int i = 0; i < kVecPoints; i++)
+    {
+      x[std::size_t(i)] = sane(x[std::size_t(i)], -1.f, 1.f, 0.f);
+      y[std::size_t(i)] = sane(y[std::size_t(i)], -1.f, 1.f, 0.f);
+    }
+    setLoop(loop, from, to);
+  }
 
   //! The points' port
-  std::vector<float> points() const
+  [[nodiscard]] std::vector<float> points() const
   {
     std::vector<float> v(kVecEnvSize, 0.f);
     for(int i = 0; i < kVecPoints; i++)
@@ -112,7 +162,7 @@ struct VecEnvSpec
   }
 
   //! The time of the move between neighbouring points a and b
-  double moveTime(int a, int b) const noexcept
+  [[nodiscard]] double moveTime(int a, int b) const noexcept
   {
     const int i = std::clamp(std::max(a, b) - 1, 0, 3);
     return time[std::size_t(i)];
@@ -195,21 +245,23 @@ private:
   {
     const int at = b;
     a = at;
+    // The span can change under a voice (automation): one outside it heads
+    // back into it
     switch(s.loop)
     {
       case VecLoop::Round:
-        if(at == s.to)
+        if(at >= s.to)
         {
           b = s.from;
           return;
         }
         break;
       case VecLoop::BackAndForth:
-        if(at == s.to && dir > 0)
+        if(at >= s.to)
           dir = -1;
-        else if(at == s.from && dir < 0)
+        else if(at <= s.from)
           dir = 1;
-        b = at + dir;
+        b = std::clamp(at + dir, 0, 4);
         return;
       default:
         break;
@@ -223,13 +275,5 @@ private:
     }
     b = at + 1;
   }
-};
-//! The points of the sounding voices, sent to the editor
-struct LivePoints
-{
-  int count{0};
-  std::array<float, 16> x{}, y{};
-
-  bool operator==(const LivePoints&) const = default;
 };
 }

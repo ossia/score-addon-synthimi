@@ -16,8 +16,9 @@
 #include <ViceVersa/Dsp/Wavetable.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include <functional>
+#include <numbers>
 #include <vector>
 
 namespace viceversa
@@ -56,20 +57,22 @@ enum class BankId : int
   Noise
 };
 inline constexpr int kBankCount = 24;
+static_assert(int(BankId::Noise) + 1 == kBankCount);
 inline constexpr int kBankFrames = 16;
 
 namespace banks
 {
-constexpr double pi = 3.14159265358979323846;
+constexpr double pi = std::numbers::pi;
 constexpr std::size_t kRender = 8192; // time-domain frames, analysed by FFT
 
-inline double frac(double x)
+[[nodiscard]] inline double frac(double x) noexcept
 {
   return x - std::floor(x);
 }
 
 //! A frame drawn in the time domain over t in [0, 1)
-inline Spectrum drawn(const std::function<double(double)>& f)
+template <typename F>
+[[nodiscard]] Spectrum drawn(F f)
 {
   std::vector<float> x(kRender);
   double mean = 0.;
@@ -85,7 +88,8 @@ inline Spectrum drawn(const std::function<double(double)>& f)
 }
 
 //! A frame given by its harmonic amplitudes, all in sine phase
-inline Spectrum additive(const std::function<double(int)>& amp)
+template <typename F>
+[[nodiscard]] Spectrum additive(F amp)
 {
   Spectrum s{};
   for(int n = 1; n <= kTopHarmonic; n++)
@@ -93,14 +97,14 @@ inline Spectrum additive(const std::function<double(int)>& amp)
   return s;
 }
 
-inline double gauss(double x, double mu, double width)
+[[nodiscard]] inline double gauss(double x, double mu, double width) noexcept
 {
   const double d = (x - mu) / width;
   return std::exp(-0.5 * d * d);
 }
 
 //! Formants of five vowels, Hz and relative level, for a voice near 110 Hz
-inline double vowel(double hz, double m)
+[[nodiscard]] inline double vowel(double hz, double m) noexcept
 {
   static constexpr double f[5][3] = {
       {800., 1150., 2900.}, // A
@@ -121,7 +125,13 @@ inline double vowel(double hz, double m)
   return v;
 }
 
-inline Spectrum frame(BankId id, double m)
+//! The recorded banks, from Brass on, in BankId's order
+inline constexpr std::array<const sampled::Bank*, 8> kSampled{
+    &sampled::kBrass, &sampled::kReeds, &sampled::kStrings, &sampled::kVoices,
+    &sampled::kKeys,  &sampled::kPlucked, &sampled::kWinds, &sampled::kMallets};
+static_assert(int(BankId::Mallets) - int(BankId::Brass) + 1 == int(kSampled.size()));
+
+[[nodiscard]] inline Spectrum frame(BankId id, double m)
 {
   switch(id)
   {
@@ -254,14 +264,7 @@ inline Spectrum frame(BankId id, double m)
     case BankId::Plucked:
     case BankId::Winds:
     case BankId::Mallets: {
-      const sampled::Bank& b = id == BankId::Brass     ? sampled::kBrass
-                               : id == BankId::Reeds   ? sampled::kReeds
-                               : id == BankId::Strings ? sampled::kStrings
-                               : id == BankId::Voices  ? sampled::kVoices
-                               : id == BankId::Keys    ? sampled::kKeys
-                               : id == BankId::Plucked ? sampled::kPlucked
-                               : id == BankId::Winds   ? sampled::kWinds
-                                                       : sampled::kMallets;
+      const sampled::Bank& b = *kSampled[std::size_t(int(id) - int(BankId::Brass))];
       const auto f = std::size_t(std::lround(m * (sampled::kFrames - 1)));
       Spectrum s{};
       for(int n = 0; n < sampled::kHarmonics; n++)
@@ -279,7 +282,7 @@ inline Spectrum frame(BankId id, double m)
   }
 }
 
-inline Bank build(BankId id)
+[[nodiscard]] inline Bank build(BankId id)
 {
   if(id == BankId::Noise)
     return Bank::noiseBank(kBankFrames);

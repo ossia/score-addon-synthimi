@@ -8,22 +8,26 @@
  * is in it sets their mix (Dsp/Vector.hpp). The point is the X/Y controls,
  * plus a five-point mix envelope, four LFOs per voice (Dsp/Modulation.hpp,
  * which also move the pitches, frames, cutoff and level), and per-note
- * expression (pressure to Y, CC 74 to X). Each source reads a band-limited wave bank
- * (Dsp/Wavetable.hpp) at its own frame position and tuning. Then a four-pole
- * ladder low-pass with its envelope, and the amplitude envelope.
+ * expression (pressure to Y, CC 74 to X). Each source reads a band-limited
+ * wave bank (Dsp/Wavetable.hpp) at its own frame position and tuning. Then a
+ * four-pole ladder low-pass with its envelope, run at twice the rate, and the
+ * amplitude envelope.
  *
  * 16 voices in four groups of four SIMD lanes, one lane per voice. Envelopes,
  * the LFOs, the mix, the filter's coefficients and the wave banks' mip levels
  * are computed every kCtrl samples and ramped; per sample only the table
  * reads, the mix, the filter and the level. A source no voice of a group
- * hears costs nothing in that group.
+ * hears costs only its phase in that group.
  *
  * Nothing allocates after prepare().
  */
 
 #include <ViceVersa/Dsp/Banks.hpp>
+#include <ViceVersa/Dsp/Base.hpp>
+#include <ViceVersa/Dsp/Halfband.hpp>
 #include <ViceVersa/Dsp/Ladder.hpp>
 #include <ViceVersa/Dsp/Modulation.hpp>
+#include <ViceVersa/Dsp/Simd.hpp>
 #include <ViceVersa/Dsp/Vector.hpp>
 #include <ViceVersa/Dsp/Wavetable.hpp>
 
@@ -31,20 +35,29 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
+#include <numbers>
 
 #if (defined(__SSE__) || defined(_M_X64)) && !defined(__EMSCRIPTEN__)
 #include <xmmintrin.h>
 #define VICEVERSA_HAS_MXCSR 1
+#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
+#define VICEVERSA_HAS_FPCR 1
 #endif
 
 namespace viceversa
 {
-inline constexpr int kLanes = 4;
 inline constexpr int kGroups = 4;
 inline constexpr int kMaxVoices = kLanes * kGroups;
-static_assert(kMaxVoices <= 16, "LivePoints holds 16 points");
 inline constexpr int kCtrl = 16;
+//! The shortest attack, so that a 0 does not click
+inline constexpr double kMinAttack = 0.001;
+//! The LFOs' outputs are smoothed over this, so that a square's or a random
+//! step does not click
+inline constexpr double kLfoSlew = 0.001;
+//! The ladder's feedback at full resonance: it oscillates from 4
+inline constexpr float kMaxFeedback = 4.2f;
+//! dB to a natural log
+inline constexpr double kLnPerDb = std::numbers::ln10 / 20.;
 
 // Stored by index in presets: append only
 enum class MixLaw : int
@@ -61,22 +74,14 @@ enum class PlayMode : int
 inline constexpr int kMixLawCount = 2;
 inline constexpr int kPlayModeCount = 3;
 
-inline bool finite(float x) noexcept
+//! The points of the sounding voices, sent to the editor
+struct LivePoints
 {
-  std::uint32_t u;
-  std::memcpy(&u, &x, sizeof(u));
-  return (u & 0x7f800000u) != 0x7f800000u;
-}
-inline float sane(float x, float lo, float hi, float fallback) noexcept
-{
-  return finite(x) ? std::clamp(x, lo, hi) : fallback;
-}
-template <typename E>
-E saneEnum(E e, int count) noexcept
-{
-  const int i = int(e);
-  return (i >= 0 && i < count) ? e : E{};
-}
+  int count{0};
+  std::array<float, kMaxVoices> x{}, y{};
+
+  bool operator==(const LivePoints&) const = default;
+};
 
 struct SourceParams
 {
@@ -122,6 +127,7 @@ struct Params
   float spread{0.3f};
   float level{0.7f};
 
+  //! In the ports' ranges (ViceVersa.hpp); NaN is the port's default
   void sanitize() noexcept
   {
     for(auto& s : src)
@@ -135,15 +141,16 @@ struct Params
     x = sane(x, -1.f, 1.f, 0.f);
     y = sane(y, -1.f, 1.f, 0.f);
     law = saneEnum(law, kMixLawCount);
+    vecEnv.sanitize();
     vecEnvDepth = sane(vecEnvDepth, 0.f, 1.f, 1.f);
     for(auto& l : lfos)
     {
       l.target = saneEnum(l.target, kModTargetCount);
       l.shape = saneEnum(l.shape, kLfoShapeCount);
-      l.period = sane(l.period, 0.01f, 100.f, 2.f);
+      l.period = sane(l.period, 0.02f, 20.f, 2.f);
       l.depth = sane(l.depth, 0.f, 1.f, 0.5f);
       l.phase = sane(l.phase, 0.f, 1.f, 0.f);
-      l.delay = sane(l.delay, 0.f, 10.f, 0.f);
+      l.delay = sane(l.delay, 0.f, 4.f, 0.f);
     }
     frameEnv = sane(frameEnv, -1.f, 1.f, 0.f);
     cutoff = sane(cutoff, 20.f, 20000.f, 8000.f);
@@ -152,17 +159,17 @@ struct Params
     keyTrack = sane(keyTrack, 0.f, 1.f, 0.5f);
     velCutoff = sane(velCutoff, 0.f, 48.f, 12.f);
     drive = sane(drive, 0.f, 1.f, 0.3f);
-    fA = sane(fA, 0.f, 20.f, 0.005f);
-    fD = sane(fD, 0.f, 20.f, 0.4f);
+    fA = sane(fA, 0.f, 10.f, 0.005f);
+    fD = sane(fD, 0.f, 10.f, 0.4f);
     fS = sane(fS, 0.f, 1.f, 0.3f);
-    fR = sane(fR, 0.f, 20.f, 0.4f);
-    aA = sane(aA, 0.f, 20.f, 0.005f);
-    aD = sane(aD, 0.f, 20.f, 0.3f);
+    fR = sane(fR, 0.f, 10.f, 0.4f);
+    aA = sane(aA, 0.f, 10.f, 0.005f);
+    aD = sane(aD, 0.f, 10.f, 0.3f);
     aS = sane(aS, 0.f, 1.f, 0.8f);
-    aR = sane(aR, 0.f, 20.f, 0.4f);
+    aR = sane(aR, 0.f, 10.f, 0.4f);
     play = saneEnum(play, kPlayModeCount);
-    glide = sane(glide, 0.f, 10.f, 0.f);
-    bendRange = sane(bendRange, 0.f, 48.f, 2.f);
+    glide = sane(glide, 0.f, 2.f, 0.f);
+    bendRange = std::round(sane(bendRange, 0.f, 48.f, 2.f));
     voices = std::clamp(voices, 1, kMaxVoices);
     octave = std::round(sane(octave, -3.f, 3.f, 0.f));
     tune = sane(tune, -100.f, 100.f, 0.f);
@@ -170,13 +177,28 @@ struct Params
     pressureY = sane(pressureY, -1.f, 1.f, 0.5f);
     timbreX = sane(timbreX, -1.f, 1.f, 0.5f);
     spread = sane(spread, 0.f, 1.f, 0.3f);
-    level = sane(level, 0.f, 2.f, 0.7f);
+    level = sane(level, 0.f, 4.f, 0.7f);
   }
 };
 
 //! Attack linear, decay and release exponential (-40 dB in their time)
 struct Adsr
 {
+  //! What a stage does in one control period: the same for every voice
+  struct Rates
+  {
+    float attack, decay, sustain, release; // a step, two factors, a level
+
+    [[nodiscard]] static Rates
+    make(float a, float d, float s, float r, int n, double fs) noexcept
+    {
+      return {
+          float(n / (std::max(double(a), kMinAttack) * fs)),
+          float(std::exp(-4.6 * n / std::max(d * fs, 1.))), s,
+          float(std::exp(-4.6 * n / std::max(r * fs, 1.)))};
+    }
+  };
+
   enum Stage : std::uint8_t
   {
     Idle,
@@ -197,16 +219,16 @@ struct Adsr
     stage = Idle;
     value = 0.f;
   }
-  bool idle() const noexcept { return stage == Idle; }
+  [[nodiscard]] bool idle() const noexcept { return stage == Idle; }
 
-  void advance(float a, float d, float s, float r, int n, double fs) noexcept
+  void advance(const Rates& r) noexcept
   {
     switch(stage)
     {
       case Idle:
         return;
       case Attack:
-        value += float(n / std::max(a * fs, 1.));
+        value += r.attack;
         if(value >= 1.f)
         {
           value = 1.f;
@@ -214,10 +236,10 @@ struct Adsr
         }
         return;
       case Decay:
-        value = s + (value - s) * float(std::exp(-4.6 * n / std::max(d * fs, 1.)));
+        value = r.sustain + (value - r.sustain) * r.decay;
         return;
       case Release:
-        value *= float(std::exp(-4.6 * n / std::max(r * fs, 1.)));
+        value *= r.release;
         if(value < 1e-4f)
           reset();
         return;
@@ -225,14 +247,35 @@ struct Adsr
   }
 };
 
+//! Denormals flushed to zero while it lives, where the FPU can
 struct ScopedFlushDenormals
 {
 #if VICEVERSA_HAS_MXCSR
   unsigned int saved = _mm_getcsr();
-  ScopedFlushDenormals() noexcept { _mm_setcsr(saved | 0x8040); }
+  ScopedFlushDenormals() noexcept { _mm_setcsr(saved | 0x8040); } // FTZ, DAZ
   ~ScopedFlushDenormals() { _mm_setcsr(saved); }
+#elif VICEVERSA_HAS_FPCR
+  std::uint64_t saved = get();
+  static std::uint64_t get() noexcept
+  {
+    std::uint64_t r;
+    __asm__ __volatile__("mrs %0, fpcr" : "=r"(r));
+    return r;
+  }
+  static void set(std::uint64_t r) noexcept { __asm__ __volatile__("msr fpcr, %0" : : "r"(r)); }
+  ScopedFlushDenormals() noexcept { set(saved | (std::uint64_t(1) << 24)); } // FZ
+  ~ScopedFlushDenormals() { set(saved); }
 #endif
 };
+
+//! Above 0.9, eases into 1 instead of reaching it
+[[nodiscard]] inline float softClip(float x) noexcept
+{
+  const float a = std::abs(x);
+  if(a <= 0.9f)
+    return x;
+  return std::copysign(0.9f + 0.1f * std::tanh((a - 0.9f) * 10.f), x);
+}
 
 class Synth
 {
@@ -240,11 +283,23 @@ public:
   struct alignas(16) Ramp
   {
     std::array<float, kLanes> value{}, step{};
-    vec4 get() const noexcept { return kfr::read<4, true>(value.data()); }
+    [[nodiscard]] vec4 get() const noexcept { return kfr::read<kLanes, true>(value.data()); }
     void advance() noexcept
     {
-      kfr::write<true>(value.data(), get() + kfr::read<4, true>(step.data()));
+      kfr::write<true>(value.data(), get() + kfr::read<kLanes, true>(step.data()));
     }
+    //! Lane l to `target` over n samples; or there at once
+    void toward(std::size_t l, float target, float n, bool jump) noexcept
+    {
+      if(jump)
+      {
+        value[l] = target;
+        step[l] = 0.f;
+      }
+      else
+        step[l] = (target - value[l]) / n;
+    }
+    void clear(std::size_t l) noexcept { value[l] = step[l] = 0.f; }
   };
 
   struct Voice
@@ -258,10 +313,13 @@ public:
     int note{60};
     int channel{0};
     float velocity{1.f};
+    float velGain{1.f}; // the velocity's level, from Vel Level at the note-on
     bool held{false};
     bool sustained{false};
     std::uint64_t stamp{0};
-    float pitch{60.f};
+    // Double: a long glide's steps at a high rate are under a float's
+    // resolution, and it would stop short
+    double pitch{60.};
     float target{60.f};
     double age{0.};
     float pressure{0.f};
@@ -271,40 +329,60 @@ public:
     int pendingNote{-1};
     int pendingChannel{0};
     float pendingVelocity{0.f};
+    bool pendingSustained{false}; // released while the pedal was down
     float fade{1.f};
     float vx{0.f}, vy{0.f}; // where the point was last, for the editor
     std::array<Lfo, kLfos> lfo{};
+    std::array<float, kLfos> lfoOut{}; // smoothed
     double vibrato{0.}; // the mod wheel's, in cycles
+    //! Whether it has had a control period since it started: the first one
+    //! puts its filter and frames where they are instead of ramping to them
+    bool primed{false};
 
-    bool gate() const noexcept { return held || sustained; }
+    [[nodiscard]] bool gate() const noexcept { return held || sustained; }
   };
 
   struct alignas(16) Group
   {
     std::array<std::array<float, kLanes>, kSources> phase{};
     std::array<std::array<float, kLanes>, kSources> inc{};
-    std::array<std::array<float, kLanes>, kSources> frame{};
-    std::array<std::array<int, kLanes>, kSources> mip{};
-    std::array<std::array<float, kLanes>, kSources> mipFrac{};
+    std::array<std::array<Mip, kLanes>, kSources> mip{};
     std::array<Ramp, kSources> weight{};
-    //! The Noise bank: a generator and a one-pole colour per source and lane
+    std::array<Ramp, kSources> frame{}; // positions in [0, frames - 1]
+    std::array<Bank::Lanes, kSources> lanes{};
+    //! The Noise bank: a generator and a one-pole colour per source and lane,
+    //! the pole and the level that keeps the colour's power
     std::array<std::array<std::uint32_t, kLanes>, kSources> noise{};
     std::array<std::array<float, kLanes>, kSources> noiseLp{};
+    std::array<Ramp, kSources> noisePole{}, noiseGain{};
     std::array<bool, kSources> heard{};
-    Ramp G{}, k{}, amp{};
-    Ladder ladder{};      // the left side, or both when there is no spread
-    Ladder ladderR{};     // the right side
+    Ramp G{}, k{}, inv{}, amp{};
+    Upsampler2x<vec4> upL{}, upR{};
+    Ladder ladderL{}, ladderR{};
+    Decimator2x<vec4> downL{}, downR{};
     bool active{false};
   };
 
+  //! Also called on the audio thread, when the host's buffers grow: at the
+  //! same rate, what sounds goes on
   void prepare(double rate) noexcept
   {
-    fs = (rate > 0. && finite(float(rate))) ? rate : 48000.;
-    builtinBanks(); // built here, never on the audio thread
+    const double next = (rate > 0. && finite(rate)) ? rate : 48000.;
+    if(prepared && next == fs)
+      return;
+    prepared = true;
+    fs = next;
+    (void)builtinBanks(); // built once per process, here: never on the audio thread
     for(auto& v : voices)
       v = Voice{};
     for(auto& g : groups)
+    {
       g = Group{};
+      g.upL.prepare();
+      g.upR.prepare();
+      g.downL.prepare();
+      g.downR.prepare();
+    }
     for(std::size_t gi = 0; gi < groups.size(); gi++)
       for(std::size_t si = 0; si < kSources; si++)
         for(std::size_t l = 0; l < kLanes; l++)
@@ -314,13 +392,16 @@ public:
     tickLeft = 0;
     modWheel = 0.f;
     dcL = dcR = dcLy = dcRy = 0.f;
-    dcCoef = float(1. - 2. * 3.14159265358979 * 10. / fs);
+    dcCoef = float(1. - 2. * std::numbers::pi * 10. / fs);
     limGain = 1.f;
+    limAttack = float(1. - std::exp(-1. / (0.001 * fs)));
     limRelease = float(1. - std::exp(-1. / (0.1 * fs)));
+    incBase = float(std::log2(440. / fs));
+    mipBase = float(std::log2(440. * kTopHarmonic / (double(kSafeCycles) * fs)));
   }
 
-  double sampleRate() const noexcept { return fs; }
-  int activeVoices() const noexcept
+  [[nodiscard]] double sampleRate() const noexcept { return fs; }
+  [[nodiscard]] int activeVoices() const noexcept
   {
     int n = 0;
     for(auto& v : voices)
@@ -328,12 +409,12 @@ public:
     return n;
   }
   //! Where the sounding voices' points are, for the editor
-  LivePoints livePoints() const noexcept
+  [[nodiscard]] LivePoints livePoints() const noexcept
   {
     LivePoints out;
     for(auto& v : voices)
     {
-      if(v.state != Voice::Active || out.count >= int(out.x.size()))
+      if(v.state != Voice::Active)
         continue;
       out.x[std::size_t(out.count)] = v.vx;
       out.y[std::size_t(out.count)] = v.vy;
@@ -341,12 +422,12 @@ public:
     }
     return out;
   }
-  float preLimiterPeak{0.f};
 
   void midi(const unsigned char* m, int n, const Params& p) noexcept
   {
     if(n < 1)
       return;
+    follow(p);
     const int status = m[0] & 0xF0;
     const int ch = m[0] & 0x0F;
     const int d1 = n > 1 ? (m[1] & 0x7F) : 0;
@@ -375,41 +456,29 @@ public:
           }
         break;
       case 0xB0:
-        if(d1 == 1)
-          modWheel = float(d2) / 127.f;
-        else if(d1 == 74)
-          cs.timbre = float(d2) / 127.f;
-        else if(d1 == 64)
+        switch(d1)
         {
-          const bool down = d2 >= 64;
-          cs.sustain = down;
-          if(!down)
-            for(auto& v : voices)
-              if(v.channel == ch && v.sustained)
-              {
-                v.sustained = false;
-                if(!v.held)
-                  releaseVoice(v);
-              }
-        }
-        else if(d1 == 120 || d1 == 123)
-        {
-          for(int i = 0; i < kMaxVoices; i++)
-          {
-            auto& v = voices[std::size_t(i)];
-            if(v.state == Voice::Stealing && v.pendingChannel == ch)
-              v.pendingNote = -1;
-            if(v.state == Voice::Free || v.channel != ch)
-              continue;
-            if(d1 == 120)
-              resetVoice(i);
+          case 1:
+            modWheel = float(d2) / 127.f;
+            break;
+          case 74:
+            cs.timbre = float(d2) / 127.f;
+            break;
+          case 64:
+            if(d2 >= 64)
+              cs.sustain = true;
             else
-            {
-              v.held = v.sustained = false;
-              releaseVoice(v);
-            }
-          }
-          monoStack.clear();
+              sustainOff(ch);
+            break;
+          case 120: // all sound off
+          case 123: // all notes off
+            allOff(ch, d1 == 120);
+            break;
+          case 121: // reset all controllers
+            resetControllers(ch);
+            break;
+          default:
+            break;
         }
         break;
       case 0xD0:
@@ -427,11 +496,30 @@ public:
   void render(const Params& p, float* l, float* r, int frames) noexcept
   {
     ScopedFlushDenormals ftz;
-    const auto& banks = builtinBanks();
-    for(int s = 0; s < kSources; s++)
-      bank[std::size_t(s)] = &banks[std::size_t(p.src[std::size_t(s)].bank)];
+    follow(p);
+    {
+      /* Spread: each source has its place, A and B to the left, C and D to
+       * the right, as mirrored pairs (A against C, B against D, the inner
+       * pair a third as far out). Where the vector's point is, the sound is:
+       * in the centre, both sides hear the four sources alike. Every voice
+       * is stereo, so a single note is as wide as a chord, at any pitch; at
+       * no spread, both sides are the same, at the level a centred pan
+       * gives. */
+      constexpr float place[kSources] = {-1.f, -1.f / 3.f, 1.f, 1.f / 3.f};
+      for(int s = 0; s < kSources; s++)
+      {
+        const float pan = 0.5f + 0.5f * p.spread * place[s];
+        panL[std::size_t(s)] = std::cos(0.5f * kPi * pan);
+        panR[std::size_t(s)] = std::sin(0.5f * kPi * pan);
+      }
+    }
+    // Drive 0 is all but linear (cubic distortion near -70 dB), 1 is hot
+    drive = 0.05f + 3.95f * p.drive * p.drive;
+    for(auto& g : groups)
+      flushGroup(g);
+    flushTiny(dcLy);
+    flushTiny(dcRy);
 
-    preLimiterPeak = 0.f;
     int done = 0;
     while(done < frames)
     {
@@ -445,7 +533,7 @@ public:
       std::fill_n(bufR.begin(), n, 0.f);
       for(auto& g : groups)
         if(g.active)
-          renderGroup(g, p, n);
+          renderGroup(g, n);
 
       for(int i = 0; i < n; i++)
       {
@@ -462,14 +550,13 @@ public:
           panic();
           ol = or_ = 0.f;
         }
+        // The limiter: its gain to what keeps the peak at kLimit, in 1 ms
+        // down, 100 ms up; what gets through is eased under 1
         const float peak = std::max(std::abs(ol), std::abs(or_));
-        preLimiterPeak = std::max(preLimiterPeak, peak);
-        if(peak * limGain > kLimit)
-          limGain = kLimit / peak;
-        else
-          limGain += (1.f - limGain) * limRelease;
-        l[done + i] = std::clamp(ol * limGain, -1.f, 1.f);
-        r[done + i] = std::clamp(or_ * limGain, -1.f, 1.f);
+        const float want = peak > kLimit ? kLimit / peak : 1.f;
+        limGain += (want - limGain) * (want < limGain ? limAttack : limRelease);
+        l[done + i] = softClip(ol * limGain);
+        r[done + i] = softClip(or_ * limGain);
       }
       done += n;
       tickLeft -= n;
@@ -481,6 +568,7 @@ public:
     for(int i = 0; i < kMaxVoices; i++)
       resetVoice(i);
     dcL = dcR = dcLy = dcRy = 0.f;
+    limGain = 1.f;
     monoStack.clear();
   }
 
@@ -501,28 +589,59 @@ private:
 
   Voice& voice(int i) noexcept { return voices[std::size_t(i)]; }
 
+  //! What changes with the parameters, before a voice uses them
+  void follow(const Params& p) noexcept
+  {
+    // The mono stack only means something in the mode that filled it
+    if(p.play != play)
+    {
+      play = p.play;
+      monoStack.clear();
+    }
+    const auto& banks = builtinBanks();
+    for(int s = 0; s < kSources; s++)
+      bank[std::size_t(s)] = &banks[std::size_t(p.src[std::size_t(s)].bank)];
+  }
+
+  static void flushGroup(Group& g) noexcept
+  {
+    g.ladderL.flushTiny();
+    g.ladderR.flushTiny();
+    for(auto* c : {&g.upL.chains.x, &g.upL.chains.y, &g.upR.chains.x, &g.upR.chains.y})
+      for(auto& s : *c)
+        viceversa::flushTiny(s);
+    for(auto* c : {&g.downL.chains.x, &g.downL.chains.y, &g.downR.chains.x, &g.downR.chains.y})
+      for(auto& s : *c)
+        viceversa::flushTiny(s);
+  }
+
   void resetVoice(int i) noexcept
   {
     voice(i) = Voice{};
     auto& g = groups[std::size_t(i / kLanes)];
     const auto l = std::size_t(i % kLanes);
-    for(int s = 0; s < kSources; s++)
+    for(std::size_t s = 0; s < kSources; s++)
     {
-      const auto si = std::size_t(s);
-      g.phase[si][l] = 0.f;
-      g.inc[si][l] = 0.f;
-      g.weight[si].value[l] = g.weight[si].step[l] = 0.f;
+      g.phase[s][l] = 0.f;
+      g.inc[s][l] = 0.f;
+      g.mip[s][l] = {};
+      g.noiseLp[s][l] = 0.f;
+      for(Ramp* r : {&g.weight[s], &g.frame[s], &g.noisePole[s], &g.noiseGain[s]})
+        r->clear(l);
     }
-    g.amp.value[l] = g.amp.step[l] = 0.f;
-    // The lane's filter state: zero it, leave the others
-    alignas(16) std::array<float, kLanes> t{};
-    for(vec4* s : {&g.ladder.s1, &g.ladder.s2, &g.ladder.s3, &g.ladder.s4, &g.ladderR.s1,
-                   &g.ladderR.s2, &g.ladderR.s3, &g.ladderR.s4})
-    {
-      kfr::write<true>(t.data(), *s);
-      t[l] = 0.f;
-      *s = kfr::read<4, true>(t.data());
-    }
+    // The lane's filter, its coefficients and its state: zeroed, the other
+    // lanes left. The next voice's first control period sets the
+    // coefficients where it starts, instead of ramping from these.
+    for(Ramp* r : {&g.G, &g.k, &g.inv, &g.amp})
+      r->clear(l);
+    g.ladderL.clearLane(l);
+    g.ladderR.clearLane(l);
+    for(auto* c : {&g.upL.chains.x, &g.upL.chains.y, &g.upR.chains.x, &g.upR.chains.y})
+      for(auto& s : *c)
+        clearLane(s, l);
+    for(auto* c : {&g.downL.chains.x, &g.downL.chains.y, &g.downR.chains.x, &g.downR.chains.y})
+      for(auto& s : *c)
+        clearLane(s, l);
   }
 
   void startVoice(int i, int note, int ch, float vel, const Params& p, bool fresh) noexcept
@@ -534,14 +653,16 @@ private:
     v.note = note;
     v.channel = ch;
     v.velocity = vel;
+    v.velGain = float(std::exp(-kLnPerDb * 40. * p.velLevel * (1. - vel)));
     v.held = true;
     v.sustained = false;
     v.stamp = ++stamp;
     v.target = float(note);
-    if(fresh || p.play == PlayMode::Poly)
-      v.pitch = float(note);
+    if(fresh || p.play == PlayMode::Poly || p.glide <= 0.f)
+      v.pitch = note;
     v.age = 0.;
     v.pendingNote = -1;
+    v.pendingSustained = false;
     v.fade = 1.f;
     v.amp.on();
     v.filter.on();
@@ -551,8 +672,10 @@ private:
           p.lfos[std::size_t(k)].phase,
           0x9E3779B9u * std::uint32_t(1 + k + kLfos * i) + std::uint32_t(stamp));
     v.vibrato = 0.;
+    // Mid-period: what is left of it, from the new note. The glide of a
+    // voice that goes on has already moved this period.
     if(tickLeft > 0)
-      controlVoice(i, p, tickLeft);
+      controlVoice(i, p, tick(p, tickLeft), fresh);
   }
 
   void releaseVoice(Voice& v) noexcept
@@ -562,6 +685,60 @@ private:
     v.amp.off();
     v.filter.off();
     v.vec.release();
+  }
+
+  void sustainOff(int ch) noexcept
+  {
+    channels[std::size_t(ch)].sustain = false;
+    for(auto& v : voices)
+    {
+      if(v.state == Voice::Stealing && v.pendingChannel == ch && v.pendingSustained)
+        v.pendingNote = -1;
+      if(v.channel == ch && v.sustained)
+      {
+        v.sustained = false;
+        if(!v.held)
+          releaseVoice(v);
+      }
+    }
+  }
+
+  //! All the channel's notes released, or silenced at once
+  void allOff(int ch, bool silence) noexcept
+  {
+    channels[std::size_t(ch)].sustain = false;
+    for(int i = 0; i < kMaxVoices; i++)
+    {
+      auto& v = voice(i);
+      if(v.state == Voice::Stealing && v.pendingChannel == ch)
+        v.pendingNote = -1;
+      if(v.state == Voice::Free || v.channel != ch)
+        continue;
+      if(silence)
+        resetVoice(i);
+      else
+      {
+        v.held = v.sustained = false;
+        releaseVoice(v);
+      }
+    }
+    monoStack.removeChannel(ch);
+  }
+
+  void resetControllers(int ch) noexcept
+  {
+    auto& cs = channels[std::size_t(ch)];
+    cs.bend = 0.f;
+    cs.pressure = 0.f;
+    cs.timbre = ChannelState{}.timbre;
+    modWheel = 0.f;
+    for(auto& v : voices)
+      if(v.channel == ch)
+      {
+        v.pressure = 0.f;
+        v.hasPressure = false;
+      }
+    sustainOff(ch);
   }
 
   void noteOn(int note, int ch, float vel, const Params& p) noexcept
@@ -618,24 +795,34 @@ private:
     v.pendingNote = note;
     v.pendingChannel = ch;
     v.pendingVelocity = vel;
+    v.pendingSustained = false;
     v.stamp = ++stamp;
   }
 
   void noteOff(int note, int ch, const Params& p) noexcept
   {
+    // In any mode: a note held in Mono, released in Poly, is no longer held
+    monoStack.remove(note, ch);
     if(p.play != PlayMode::Poly)
     {
       monoNoteOff(note, ch);
       return;
     }
+    const bool pedal = channels[std::size_t(ch)].sustain;
     for(auto& v : voices)
     {
       if(v.state == Voice::Stealing && v.pendingNote == note && v.pendingChannel == ch)
-        v.pendingNote = -1;
+      {
+        // Still waiting for its voice: it will start sustained, or not at all
+        if(pedal)
+          v.pendingSustained = true;
+        else
+          v.pendingNote = -1;
+      }
       if(v.state == Voice::Active && v.note == note && v.channel == ch && v.held)
       {
         v.held = false;
-        if(channels[std::size_t(ch)].sustain)
+        if(pedal)
           v.sustained = true;
         else
           releaseVoice(v);
@@ -668,6 +855,12 @@ private:
           return;
         }
     }
+    void removeChannel(int c) noexcept
+    {
+      size = int(std::remove_if(notes.begin(), notes.begin() + size,
+                                [c](const auto& e) { return e.second == c; })
+                 - notes.begin());
+    }
   } monoStack;
 
   void monoNoteOn(int note, int ch, float vel, const Params& p) noexcept
@@ -697,13 +890,10 @@ private:
       return;
     }
     startVoice(0, note, ch, vel, p, false);
-    if(p.glide <= 0.f)
-      v.pitch = v.target;
   }
 
   void monoNoteOff(int note, int ch) noexcept
   {
-    monoStack.remove(note, ch);
     for(int i = 1; i < kMaxVoices; i++)
       if(voice(i).state == Voice::Active && voice(i).note == note && voice(i).held)
       {
@@ -729,8 +919,39 @@ private:
   }
 
   // ---- control rate ----------------------------------------------------
+  //! What a control period of n samples is for every voice alike
+  struct Tick
+  {
+    int n;
+    double dt;
+    Adsr::Rates amp, filter;
+    double glide; // the glide's step, as a fraction of what is left; 0: none
+    float slew;   // the LFOs' smoothing, likewise
+    float fade;   // a stolen voice's fade's step
+    float cutoff; // semitones from A4
+    float k;
+  };
+
+  [[nodiscard]] Tick tick(const Params& p, int n) const noexcept
+  {
+    const double dt = double(n) / fs;
+    return {
+        n,
+        dt,
+        Adsr::Rates::make(p.aA, p.aD, p.aS, p.aR, n, fs),
+        Adsr::Rates::make(p.fA, p.fD, p.fS, p.fR, n, fs),
+        p.glide > 0.f && p.play != PlayMode::Poly
+            ? 1. - std::exp(-dt / (double(p.glide) / 3.))
+            : 0.,
+        float(1. - std::exp(-dt / kLfoSlew)),
+        float(n / (0.003 * fs)),
+        12.f * std::log2(p.cutoff / 440.f),
+        kMaxFeedback * p.resonance};
+  }
+
   void control(const Params& p, int n) noexcept
   {
+    const Tick t = tick(p, n);
     for(int i = 0; i < kMaxVoices; i++)
     {
       auto& v = voice(i);
@@ -738,13 +959,21 @@ private:
       {
         const int pn = v.pendingNote, pc = v.pendingChannel;
         const float pv = v.pendingVelocity;
+        const bool sustained = v.pendingSustained;
         if(pn >= 0)
+        {
           startVoice(i, pn, pc, pv, p, true);
+          if(sustained)
+          {
+            v.held = false;
+            v.sustained = true;
+          }
+        }
         else
           resetVoice(i);
       }
       if(v.state != Voice::Free)
-        controlVoice(i, p, n);
+        controlVoice(i, p, t, true);
     }
     for(int gi = 0; gi < kGroups; gi++)
     {
@@ -755,50 +984,60 @@ private:
     }
   }
 
-  void controlVoice(int i, const Params& p, int n) noexcept
+  void controlVoice(int i, const Params& p, const Tick& t, bool advanceGlide) noexcept
   {
     auto& v = voice(i);
     auto& g = groups[std::size_t(i / kLanes)];
     g.active = true;
     const auto l = std::size_t(i % kLanes);
     const auto& cs = channels[std::size_t(v.channel)];
-    const double dt = double(n) / fs;
-    v.age += dt;
+    const float n = float(t.n);
+    v.age += t.dt;
 
-    if(p.glide > 0.f && p.play != PlayMode::Poly)
-      v.pitch += (v.target - v.pitch) * float(1. - std::exp(-dt / (double(p.glide) / 3.)));
-    else
-      v.pitch = v.target;
+    if(advanceGlide)
+    {
+      if(t.glide > 0.)
+      {
+        v.pitch += (v.target - v.pitch) * t.glide;
+        if(std::abs(v.target - v.pitch) < 1e-4)
+          v.pitch = v.target;
+      }
+      else
+        v.pitch = v.target;
+    }
 
-    v.amp.advance(p.aA, p.aD, p.aS, p.aR, n, fs);
-    v.filter.advance(p.fA, p.fD, p.fS, p.fR, n, fs);
-    v.vec.advance(p.vecEnv, dt);
+    v.amp.advance(t.amp);
+    v.filter.advance(t.filter);
+    v.vec.advance(p.vecEnv, t.dt);
 
     const bool steal = v.state == Voice::Stealing;
     if(steal)
-      v.fade = std::max(0.f, v.fade - float(n) / float(0.003 * fs));
+      v.fade = std::max(0.f, v.fade - t.fade);
 
     // The LFOs: each still for its Delay, then rising over half of it
     ModAmounts mod;
     for(int k = 0; k < kLfos; k++)
     {
-      const auto& lp = p.lfos[std::size_t(k)];
+      const auto ki = std::size_t(k);
+      const auto& lp = p.lfos[ki];
       if(lp.target == ModTarget::Off || lp.depth <= 0.f)
         continue;
       if(v.age < lp.delay)
         continue;
       const float fade
           = lp.delay > 0.f ? std::min(1.f, float((v.age - lp.delay) / (0.5 * lp.delay))) : 1.f;
-      mod.add(lp.target, lp.depth * fade,
-              v.lfo[std::size_t(k)].tick(lp.shape, dt / double(lp.period)));
+      const float raw = v.lfo[ki].tick(lp.shape, t.dt / double(lp.period));
+      float& out = v.lfoOut[ki];
+      out = v.primed ? out + (raw - out) * t.slew : raw;
+      mod.add(lp.target, lp.depth * fade, out);
     }
     // The mod wheel: a vibrato of its own, up to half a semitone at 5 Hz
     float wheel = 0.f;
     if(modWheel > 0.f)
     {
-      v.vibrato += 5. * dt;
+      v.vibrato += 5. * t.dt;
       v.vibrato -= std::floor(v.vibrato);
-      wheel = 0.5f * modWheel * std::sin(6.28318530717958647692f * float(v.vibrato));
+      wheel = 0.5f * modWheel * std::sin(kTwoPi * float(v.vibrato));
     }
     const float pressure = v.hasPressure ? v.pressure : cs.pressure;
 
@@ -818,176 +1057,164 @@ private:
     const Weights w = p.law == MixLaw::Linear ? mixLinear(vx, vy) : mixEqualPower(vx, vy);
     const float wt[kSources] = {w.a, w.b, w.c, w.d};
 
-    const float semis = v.pitch + 12.f * p.octave + 0.01f * p.tune + cs.bend * p.bendRange
+    const float pitch = float(v.pitch);
+    const float semis = pitch + 12.f * p.octave + 0.01f * p.tune + cs.bend * p.bendRange
                         + mod.pitch + wheel;
     const float fenv = v.filter.value;
+    const bool jump = !v.primed;
     for(int s = 0; s < kSources; s++)
     {
       const auto si = std::size_t(s);
       const auto& sp = p.src[si];
-      const float hz = 440.f
-                       * std::exp2((std::clamp(semis + sp.coarse + 0.01f * sp.fine + mod.pitchOf[si],
-                                               -24.f, 160.f)
-                                    - 69.f)
-                                   / 12.f);
-      const float dx = std::clamp(float(hz / fs), 0.f, 0.49f);
-      g.inc[si][l] = dx;
-      Bank::levelFor(dx, g.mip[si][l], g.mipFrac[si][l]);
-      const int frames = std::max(1, bank[si] ? bank[si]->frames() : 1);
-      g.frame[si][l]
-          = std::clamp(sp.frame + p.frameEnv * fenv + mod.frameOf[si], 0.f, 1.f)
-            * float(frames - 1);
-      g.weight[si].step[l] = (wt[s] * sp.level - g.weight[si].value[l]) / float(n);
+      // Octaves from A4: the increment and the mip level from it
+      const float oct
+          = (std::clamp(semis + sp.coarse + 0.01f * sp.fine + mod.pitchOf[si], -24.f, 160.f)
+             - 69.f)
+            / 12.f;
+      g.inc[si][l] = std::min(std::exp2(oct + incBase), 0.49f);
+      g.mip[si][l] = Bank::levelFor(oct + mipBase);
+      const Bank* b = bank[si];
+      const float pos
+          = std::clamp(sp.frame + p.frameEnv * fenv + mod.frameOf[si], 0.f, 1.f);
+      g.frame[si].toward(l, pos * float(std::max(0, b ? b->frames() - 1 : 0)), n, jump);
+      g.weight[si].toward(l, wt[s] * sp.level, n, false);
+      if(b && b->noise())
+      {
+        // White noise, a one-pole darkening it as the frame position rises,
+        // its power kept
+        const float a = 0.995f * pos;
+        g.noisePole[si].toward(l, a, n, jump);
+        g.noiseGain[si].toward(l, 0.866f * std::sqrt((1.f + a) / (1.f - a)), n, jump);
+      }
     }
 
-    // The filter: cutoff in semitones from its envelope, the key, the velocity
-    const float cutSemis = 12.f * std::log2(p.cutoff / 440.f) + p.filterEnv * fenv
-                           + p.keyTrack * float(v.note - 60) + p.velCutoff * (v.velocity - 1.f)
-                           + mod.cutoff;
-    const double fc = std::clamp(440. * std::exp2(cutSemis / 12.), 10., 0.45 * fs);
-    const double gTan = std::tan(3.14159265358979 * fc / fs);
-    const float G = float(gTan / (1. + gTan));
-    const float k = 3.9f * p.resonance;
-    g.G.step[l] = (G - g.G.value[l]) / float(n);
-    g.k.step[l] = (k - g.k.value[l]) / float(n);
-    if(g.G.value[l] <= 0.f)
-    {
-      // A new voice starts where its filter is
-      g.G.value[l] = G;
-      g.G.step[l] = 0.f;
-    }
+    // The filter: cutoff in semitones from its envelope, the key, the
+    // velocity; its coefficients for twice the rate, where it runs
+    const float cutSemis = t.cutoff + p.filterEnv * fenv + p.keyTrack * (pitch - 60.f)
+                           + p.velCutoff * (v.velocity - 1.f) + mod.cutoff;
+    const float fc
+        = std::clamp(440.f * std::exp2(cutSemis / 12.f), 10.f, float(0.45 * fs));
+    const float gTan = tanCutoff(kPi * fc / float(2. * fs));
+    const float G = gTan / (1.f + gTan);
+    const float G2 = G * G;
+    g.G.toward(l, G, n, jump);
+    g.k.toward(l, t.k, n, jump);
+    g.inv.toward(l, 1.f / (1.f + t.k * G2 * G2), n, jump);
 
-    const float gain
-        = kPerVoice * v.amp.value * v.fade * mod.level
-          * float(std::exp(-0.11512925 * 40. * p.velLevel * (1. - v.velocity)));
-    g.amp.step[l] = (gain - g.amp.value[l]) / float(n);
+    const float gain = kPerVoice * v.amp.value * v.fade * mod.level * v.velGain;
+    g.amp.toward(l, gain, n, false);
+    v.primed = true;
 
     if(!steal && v.amp.idle() && !v.gate())
       resetVoice(i);
   }
 
   // ---- audio rate ------------------------------------------------------
-  void renderGroup(Group& g, const Params& p, int n) noexcept
+  void renderGroup(Group& g, int n) noexcept
   {
-    // A source is read only if a voice of the group can hear it this tick
+    // A source's table is read only if a voice of the group can hear it
+    // this period; its phases move on in any case, so that sources at the
+    // same pitch keep their relation whatever the vector did
     for(int s = 0; s < kSources; s++)
     {
       const auto si = std::size_t(s);
       bool heard = false;
-      for(int l = 0; l < kLanes; l++)
-        heard |= g.weight[si].value[std::size_t(l)] > 1e-5f
-                 || g.weight[si].value[std::size_t(l)] + float(n) * g.weight[si].step[std::size_t(l)]
-                        > 1e-5f;
+      for(std::size_t l = 0; l < kLanes; l++)
+        heard |= g.weight[si].value[l] > 1e-5f
+                 || g.weight[si].value[l] + float(n) * g.weight[si].step[l] > 1e-5f;
       g.heard[si] = heard && bank[si] && !bank[si]->empty();
+      if(g.heard[si] && !bank[si]->noise())
+        bank[si]->lanes(g.lanes[si], g.mip[si]);
     }
-    std::array<bool, kLanes> live{};
-    for(int l = 0; l < kLanes; l++)
-      live[std::size_t(l)] = g.amp.value[std::size_t(l)] > 0.f || g.amp.step[std::size_t(l)] != 0.f;
 
-    // Drive 0 is all but linear (cubic distortion near -70 dB), 1 is hot
-    const vec4 drive(0.05f + 3.95f * p.drive * p.drive);
-    /* Spread: each source has its place, A and B to the left, C and D to
-     * the right, as mirrored pairs (A against C, B against D, the inner pair
-     * a third as far out). Where the vector's point is, the sound is: in the
-     * centre, both sides hear the four sources alike. Every voice is stereo,
-     * so a single note is as wide as a chord, at any pitch. */
-    const bool stereo = p.spread > 0.f;
-    float gl[kSources], gr[kSources];
+    vec4 phase[kSources], inc[kSources];
+    for(std::size_t s = 0; s < kSources; s++)
     {
-      const float place[kSources] = {-1.f, -1.f / 3.f, 1.f, 1.f / 3.f};
-      for(int s = 0; s < kSources; s++)
-      {
-        const float pan = 0.5f + 0.5f * p.spread * place[s];
-        gl[s] = std::cos(1.5707963f * pan);
-        gr[s] = std::sin(1.5707963f * pan);
-      }
+      phase[s] = kfr::read<kLanes, true>(g.phase[s].data());
+      inc[s] = kfr::read<kLanes, true>(g.inc[s].data());
     }
+    const vec4 one(1.f), driveIn(drive), driveOut(1.f / drive);
 
     for(int i = 0; i < n; i++)
     {
-      vec4 mix(0.f), mixR(0.f);
+      vec4 mixL(0.f), mixR(0.f);
       for(int s = 0; s < kSources; s++)
       {
         const auto si = std::size_t(s);
-        if(!g.heard[si])
-          continue;
-        alignas(16) std::array<float, kLanes> out{};
-        const Bank& b = *bank[si];
-        auto& ph = g.phase[si];
-        if(b.noise())
+        if(g.heard[si])
         {
-          // White noise, a one-pole darkening it as the frame position rises,
-          // its level held
-          const float span = float(std::max(1, b.frames() - 1));
-          for(int l = 0; l < kLanes; l++)
+          vec4 o;
+          if(bank[si]->noise())
           {
-            const auto li = std::size_t(l);
-            if(!live[li])
-              continue;
-            auto& x = g.noise[si][li];
-            x ^= x << 13;
-            x ^= x >> 17;
-            x ^= x << 5;
-            const float white = float(std::int32_t(x)) * (1.f / 2147483648.f);
-            const float a = 0.995f * g.frame[si][li] / span;
-            auto& lp = g.noiseLp[si][li];
-            lp = (1.f - a) * white + a * lp;
-            out[li] = 0.866f * lp * std::sqrt((1.f + a) / (1.f - a));
+            alignas(16) std::array<float, kLanes> out;
+            const auto& a = g.noisePole[si].value;
+            for(std::size_t l = 0; l < kLanes; l++)
+            {
+              auto& x = g.noise[si][l];
+              x ^= x << 13;
+              x ^= x >> 17;
+              x ^= x << 5;
+              const float white = float(std::int32_t(x)) * (1.f / 2147483648.f);
+              auto& lp = g.noiseLp[si][l];
+              lp = (1.f - a[l]) * white + a[l] * lp;
+              out[l] = lp;
+            }
+            o = kfr::read<kLanes, true>(out.data()) * g.noiseGain[si].get();
+            g.noisePole[si].advance();
+            g.noiseGain[si].advance();
           }
+          else
+            o = Bank::read(g.lanes[si], g.frame[si].get(), phase[si]);
+          o *= g.weight[si].get();
+          mixL += o * vec4(panL[si]);
+          mixR += o * vec4(panR[si]);
         }
-        else
-          for(int l = 0; l < kLanes; l++)
-          {
-            const auto li = std::size_t(l);
-            if(!live[li])
-              continue;
-            out[li] = b.read(g.frame[si][li], g.mip[si][li], g.mipFrac[si][li], ph[li]);
-            float x = ph[li] + g.inc[si][li];
-            ph[li] = x >= 1.f ? x - 1.f : x;
-          }
-        const vec4 o = kfr::read<4, true>(out.data()) * g.weight[si].get();
-        if(stereo)
-        {
-          mix += o * vec4(gl[s]);
-          mixR += o * vec4(gr[s]);
-        }
-        else
-          mix += o;
+        const vec4 x = phase[si] + inc[si];
+        phase[si] = kfr::select(x >= one, x - one, x);
+        g.weight[si].advance();
+        g.frame[si].advance();
       }
-      for(int s = 0; s < kSources; s++)
-        g.weight[std::size_t(s)].advance();
 
-      const vec4 amp = g.amp.get();
-      if(stereo)
-      {
-        bufL[std::size_t(i)] += kfr::hadd(g.ladder.process(mix, g.G.get(), g.k.get(), drive) * amp);
-        bufR[std::size_t(i)]
-            += kfr::hadd(g.ladderR.process(mixR, g.G.get(), g.k.get(), drive) * amp);
-      }
-      else
-      {
-        // Centred: the same on both sides, at the level a centred pan gives
-        const float y = 0.70710678f
-                        * kfr::hadd(g.ladder.process(mix, g.G.get(), g.k.get(), drive) * amp);
-        bufL[std::size_t(i)] += y;
-        bufR[std::size_t(i)] += y;
-      }
+      // The filter at twice the rate: both sides, both halves of the sample,
+      // with the same coefficients
+      const vec4 k = g.k.get();
+      const auto c = Ladder::Coefs::make(g.G.get(), k, g.inv.get());
+      vec4 l0, l1, r0, r1;
+      g.upL.process(mixL * driveIn, l0, l1);
+      g.upR.process(mixR * driveIn, r0, r1);
+      l0 = g.ladderL.process(l0, c);
+      l1 = g.ladderL.process(l1, c);
+      r0 = g.ladderR.process(r0, c);
+      r1 = g.ladderR.process(r1, c);
+      // Back to the input's level; resonance thins the passband, give some back
+      const vec4 out = (one + vec4(0.5f) * k) * driveOut * g.amp.get();
+      bufL[std::size_t(i)] += kfr::hadd(g.downL.process(l0, l1) * out);
+      bufR[std::size_t(i)] += kfr::hadd(g.downR.process(r0, r1) * out);
       g.G.advance();
       g.k.advance();
+      g.inv.advance();
       g.amp.advance();
     }
+
+    for(std::size_t s = 0; s < kSources; s++)
+      kfr::write<true>(g.phase[s].data(), phase[s]);
   }
 
   double fs{48000.};
+  bool prepared{false};
+  PlayMode play{PlayMode::Poly};
   std::array<const Bank*, kSources> bank{};
   std::array<ChannelState, 16> channels{};
   std::array<float, kCtrl> bufL{}, bufR{};
+  std::array<float, kSources> panL{}, panR{};
   std::uint64_t stamp{0};
   int tickLeft{0};
   float modWheel{0.f};
+  float drive{1.f};
+  float incBase{0.f}, mipBase{0.f}; // log2 of A4's increment, and its octaves over level 0
   float dcL{0.f}, dcR{0.f}, dcLy{0.f}, dcRy{0.f};
   float dcCoef{0.9987f};
   float limGain{1.f};
-  float limRelease{0.0002f};
+  float limAttack{0.02f}, limRelease{0.0002f};
 };
 }

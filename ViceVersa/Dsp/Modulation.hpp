@@ -19,6 +19,8 @@
  *   level      down to silence at the wave's lowest point
  */
 
+#include <ViceVersa/Dsp/Base.hpp>
+
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -110,7 +112,7 @@ struct Lfo
         v = p < 0.25f ? 4.f * p : p < 0.75f ? 2.f - 4.f * p : 4.f * p - 4.f;
         break;
       case LfoShape::Sine:
-        v = std::sin(6.28318530717958647692f * p);
+        v = std::sin(kTwoPi * p);
         break;
       case LfoShape::Square:
         v = p < 0.5f ? 1.f : -1.f;
