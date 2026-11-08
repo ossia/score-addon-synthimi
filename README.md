@@ -289,3 +289,128 @@ For String and Exciter: the excitation and the halo, the string low or gone.
 Presets store their values by port index: Cordito's ports must only ever be
 appended to, and its enumerations (Engine, Exciter, Symp. Tuning, Body,
 Play Mode, Pressure) likewise.
+
+## CZumarzu phase distortion synthesizer
+
+CZumarzu is a phase distortion synthesizer after the Casio CZ series: 16
+voices, two lines, each with two alternating waveforms and eight-step DCO
+(pitch), DCW (timbre) and DCA (level) envelopes, ring and noise modulation.
+
+Each waveform is a cosine read through a distorted phase, as on the CZ's
+uPD933 chip, whose transfer functions the tests compare against (MAME's
+model, in `tests/ref/upd933`). Its twelve waves are the CZ's eight (Saw,
+Square, Pulse, Double Sine, Saw-Pulse, and the windowed Reso Saw, Reso
+Triangle and Reso Trapezoid), three more phase maps in the same spirit
+(Double Pulse, Reso Pulse, Reso Double Saw), and VPS (vector phaseshaping),
+whose **Formant** moves a peak through the spectrum.
+
+The envelopes keep the CZ's rates: a step's time is its rate times the
+distance it moves. Each envelope has **Sustain** and **End** steps and a
+**Loop**, which goes back to the first step after the sustain step (or the
+end) while the key is held: repeated hits, a filter that keeps moving. The
+graph edits each step's level (height) and rate (across its column, fastest
+on the left); a drag moves a point by as much as the mouse moves.
+
+Phase distortion aliases as soon as the distortion is strong. **Quality**
+picks how it is kept down:
+
+| Quality | How | Latency | Aliasing (worst, note 96) | CPU, 16 voices |
+| --- | --- | --- | --- | --- |
+| Live | Second-order antiderivative antialiasing | none | -34 dB on the waves that jump | lowest |
+| Clean | The same, plus band-limited steps at each jump | 9 samples | -54 dB | 2.8 % |
+| Clean 2x | Clean, oversampled twice through a polyphase half-band | 9 samples, plus the half-band's | -72 dB | 4.9 % |
+| Clean 4x | Clean, oversampled four times | 9 samples, plus the half-bands' | -88 dB | 9 % |
+
+Waves that do not jump are at -62 to -75 dB in Live and Clean already.
+
+### CZumarzu presets
+
+The default package's `Presets/CZumarzu` collection holds 47 presets. Levels
+are matched by measurement; the rhythmic ones loop on a 120 bpm grid while
+the key is held.
+
+| Category | Presets |
+| --- | --- |
+| Bass | Acid Line, Grit Bass, Resonant Bass |
+| Bells | Glass Bells, Glass Harmonica |
+| Brass | Brass Section, Pressure Brass |
+| Keys | Alternating Organ, Bitter Keys, Clav, Digital Piano, Organ, Tine Piano, Toy Piano |
+| Lead | Detuned Saws, Hollow Flute, Pressure Lead, Saw-Pulse Lead, Sub Pulse Lead, Sync Lead |
+| Pad | Formant Choir, Formant Pad, Hollow Choir, Metal Pad, Slow Morph, Soft Pad, Strings |
+| Pluck | Kalimba, Metallic Rain, Wah Pluck |
+| Percussion | Pitch Drop Tom |
+| Rhythmic | Clave, Dotted Delay, Filter Ticks, Gallop, Laser Hits, Octave Trill, Sixteenths, Stutter, Triplet Echo |
+| Textures | Deep Space, Ring Swarm |
+| Effects | Broken Radio, Noise Sweep, Zapper |
+| Other | Chip Arp, Talking Wire |
+
+## ViceVersa vector synthesizer
+
+ViceVersa is a vector synthesizer after the Prophet VS: 16 voices, four
+wavetable sources on the corners of a diamond (A west, B north, C east, D
+south), mixed by where a point is in it. The mix follows the VS's: each
+corner alone at full level, the centre a quarter of each. **Mix Law** can
+also be equal power, for sources that do not add in phase.
+
+The point is the **Position** (one 2D control, to map or automate as one),
+plus a five-point mix envelope, the LFOs, and per-note expression (pressure
+to Y, CC 74 to X). The envelope moves through its points in four timed
+moves (tempo-synced if wanted), can loop over a span of them, round or back
+and forth, while the key is held, and goes to its last point on release. On
+the diamond, two buttons pick what a drag moves: the envelope's points, or
+the Position, as the VS's joystick. The point of each sounding voice is
+shown on it.
+
+Each source reads one of 24 band-limited wave banks, at its own frame,
+tuning and level:
+
+| Kind | Banks |
+| --- | --- |
+| Classic | Sine-Saw, Shapes, Square-Saw, Pulse Width, Sync |
+| Additive | Partials, Harmonics, Organ, Glass, Comb |
+| Digital | Fold, Digital, Phase Dist, FM |
+| Formant | Vowels |
+| Instruments | Brass, Reeds, Strings, Voices, Keys, Plucked, Winds, Mallets |
+| Noise | Noise |
+
+The instrument banks are harmonic spectra resynthesised from the One Laptop
+Per Child sound sample library (https://wiki.laptop.org/go/Sound_samples,
+CC-BY 3.0), as the VS's own instrument waves were: single cycles through a
+note, from its attack to its sustain. `tools/extract_waves.py` generates them.
+
+The **Modulation** tab has four LFOs per voice, as Cordito's. Each moves one
+target: X, Y, the pitch of every source or of one, a source's frame, the
+filter's cutoff or the level, with its shape, period, depth, delay and the
+phase each note starts it at. Two LFOs on X and Y a quarter of a cycle apart
+draw a circle (sine) or run around the diamond's edge (triangle).
+
+Then a four-pole ladder low-pass with its envelope, and the amplitude
+envelope. Spread places A and B to the left and C and D to the right, per
+voice, so that a single note is as wide as a chord.
+
+### ViceVersa presets
+
+The default package's `Presets/ViceVersa` collection holds 36 presets.
+Levels are matched by measurement.
+
+| Category | Presets |
+| --- | --- |
+| Bass | Fold Bass, Fold Growl, Formant Bass, Square Saw Bass, Sub Pulse |
+| Bells | Bell Morph, Bell Vector, Digital Bells |
+| Brass | PD Brass |
+| Keys | Breathing Organ, Organ Drift, Velvet Keys, Wah Keys |
+| Lead | Digital Grit, Pulse Rider, Sync Lead, Sync Sweep Lead, Wide Saws |
+| Pad | Breathing Pad, Choir of Glass, Harmonic Choir, PD Strings, PWM Strings, Underwater, Vector Pad, Vowel Morph |
+| Pluck | Glass Pluck |
+| Percussion | Granite |
+| Rhythmic | Morph Arp, Octave Cascade, Vowel Sequencer |
+| Textures | Evolving Texture, Night Drone, Spectral Drift |
+| Effects | Comb Sweep, Glitch Corners |
+
+### Regenerating the presets
+
+The presets of both are generated: after changing their ports or voicing,
+
+    score_addon_synthimi_make_presets <package>/Presets
+
+writes them again, levels matched.
