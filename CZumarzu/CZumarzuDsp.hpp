@@ -27,6 +27,7 @@
 #include <CZumarzu/Dsp/PhaseMaps.hpp>
 #include <Dsp/Denormals.hpp>
 #include <Dsp/Halfband.hpp>
+#include <Dsp/Mono.hpp>
 #include <Dsp/Numeric.hpp>
 #include <Dsp/Output.hpp>
 
@@ -916,33 +917,9 @@ private:
   //! The note is already out of the stack
   void monoNoteOff(int note, int ch, const Params& p) noexcept
   {
-    auto& v = voice(0);
-    // Notes left from Poly
-    for(int i = 1; i < kMaxVoices; i++)
-    {
-      auto& w = voice(i);
-      if(w.state == Voice::Active && w.note == note && w.channel == ch && w.held)
-      {
-        w.held = false;
-        releaseVoice(w, p);
-      }
-    }
-    if(v.state != Voice::Active || v.note != note || v.channel != ch)
-      return;
-    if(monoStack.size > 0)
-    {
-      // Back to the newest still held, as a legato slide
-      const auto [n, c] = monoStack.notes[std::size_t(monoStack.size - 1)];
-      v.note = n;
-      v.channel = c;
-      v.target = float(n);
-      return;
-    }
-    v.held = false;
-    if(channels[std::size_t(ch)].sustain)
-      v.sustained = true;
-    else
-      releaseVoice(v, p);
+    synthimi::monoNoteOff(
+        voices, monoStack, channels[std::size_t(ch)].sustain, note, ch,
+        [this, &p](Voice& v) { releaseVoice(v, p); });
   }
 
   // ---- control rate ----------------------------------------------------

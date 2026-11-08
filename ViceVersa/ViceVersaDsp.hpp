@@ -31,6 +31,7 @@
 #include <ViceVersa/Dsp/Wavetable.hpp>
 #include <Dsp/Denormals.hpp>
 #include <Dsp/Halfband.hpp>
+#include <Dsp/Mono.hpp>
 #include <Dsp/Output.hpp>
 
 #include <algorithm>
@@ -893,32 +894,9 @@ private:
 
   void monoNoteOff(int note, int ch) noexcept
   {
-    // Notes left from Poly
-    for(int i = 1; i < kMaxVoices; i++)
-    {
-      auto& w = voice(i);
-      if(w.state == Voice::Active && w.note == note && w.channel == ch && w.held)
-      {
-        w.held = false;
-        releaseVoice(w);
-      }
-    }
-    auto& v = voice(0);
-    if(v.state != Voice::Active || v.note != note || v.channel != ch)
-      return;
-    if(monoStack.size > 0)
-    {
-      const auto [n, c] = monoStack.notes[std::size_t(monoStack.size - 1)];
-      v.note = n;
-      v.channel = c;
-      v.target = float(n);
-      return;
-    }
-    v.held = false;
-    if(channels[std::size_t(ch)].sustain)
-      v.sustained = true;
-    else
-      releaseVoice(v);
+    synthimi::monoNoteOff(
+        voices, monoStack, channels[std::size_t(ch)].sustain, note, ch,
+        [this](Voice& v) { releaseVoice(v); });
   }
 
   // ---- control rate ----------------------------------------------------

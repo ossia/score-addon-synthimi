@@ -177,6 +177,7 @@ avnd_score_plugin_add(
     CZumarzu/Dsp/PhaseMaps.hpp
     Dsp/Denormals.hpp
     Dsp/Halfband.hpp
+    Dsp/Mono.hpp
     Dsp/Numeric.hpp
     Dsp/Output.hpp
   TARGET czumarzu
@@ -201,6 +202,7 @@ avnd_score_plugin_add(
     ViceVersa/Dsp/Wavetable.hpp
     Dsp/Denormals.hpp
     Dsp/Halfband.hpp
+    Dsp/Mono.hpp
     Dsp/Numeric.hpp
     Dsp/Output.hpp
   TARGET viceversa

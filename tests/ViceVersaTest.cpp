@@ -1769,3 +1769,35 @@ TEST_CASE("Unconnected, the processor counts nothing", "[viceversa][ui]")
   CHECK(sent >= 3);
   CHECK(sent <= 4);
 }
+
+TEST_CASE("In Mono, the pedal holds the voices left from Poly", "[viceversa][robustness]")
+{
+  auto p = plain(BankId::SineSaw, 0.f);
+  p.aR = 0.05f;
+  Rig rig;
+  // Voice 0 takes 64 (the voice Mono plays), another the 60 released later
+  rig.on(64, 100, p);
+  rig.on(60, 100, p);
+  rig.run(0.05, p);
+  REQUIRE(rig.s->voices[0].note == 64);
+  int i = 1;
+  while(i < kMaxVoices
+        && (rig.s->voices[std::size_t(i)].state != Synth::Voice::Active
+            || rig.s->voices[std::size_t(i)].note != 60))
+    i++;
+  REQUIRE(i < kMaxVoices);
+  const auto& v = rig.s->voices[std::size_t(i)];
+
+  rig.send(0xB0, 64, 127, p);
+  p.play = PlayMode::Mono;
+  rig.off(60, p);
+  CHECK_FALSE(v.held);
+  CHECK(v.sustained);
+  CHECK(v.amp.stage != Adsr::Release);
+  // Up: released, then gone
+  rig.send(0xB0, 64, 0, p);
+  CHECK(v.amp.stage == Adsr::Release);
+  rig.off(64, p);
+  rig.run(2., p);
+  CHECK(rig.s->activeVoices() == 0);
+}

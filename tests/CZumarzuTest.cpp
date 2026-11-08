@@ -1745,3 +1745,35 @@ TEST_CASE("The envelope graph drags with the left button only", "[czumarzu][ui]"
   CHECK(w.shown == -1);
   CHECK(starts == 2);
 }
+
+TEST_CASE("In Mono, the pedal holds the voices left from Poly", "[czumarzu][voices]")
+{
+  Params p;
+  p.sanitize();
+  Rig rig;
+  // Voice 0 takes 64 (the voice Mono plays), another the 60 released later
+  rig.on(64, 100, p);
+  rig.on(60, 100, p);
+  rig.run(0.05, p);
+  REQUIRE(rig.s->voices[0].note == 64);
+  int i = 1;
+  while(i < kMaxVoices
+        && (rig.s->voices[std::size_t(i)].state != Synth::Voice::Active
+            || rig.s->voices[std::size_t(i)].note != 60))
+    i++;
+  REQUIRE(i < kMaxVoices);
+  const auto& v = rig.s->voices[std::size_t(i)];
+  REQUIRE(v.state == Synth::Voice::Active);
+
+  rig.send(0xB0, 64, 127, p);
+  p.play = PlayMode::Mono;
+  rig.off(60, p);
+  CHECK_FALSE(v.held);
+  CHECK(v.sustained);
+  // Up: released, then gone
+  rig.send(0xB0, 64, 0, p);
+  CHECK_FALSE(v.sustained);
+  rig.off(64, p);
+  rig.run(10., p);
+  CHECK(rig.s->activeVoices() == 0);
+}
