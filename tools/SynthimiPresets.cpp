@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -27,6 +28,8 @@
 #include <string_view>
 #include <type_traits>
 #include <vector>
+
+#include <ossia/math/safe_math.hpp>
 
 namespace
 {
@@ -60,7 +63,7 @@ std::string escaped(std::string_view s)
 
 void putFloat(std::ostream& o, double v)
 {
-  if(!std::isfinite(v))
+  if(!ossia::safe_isfinite(v))
     throw std::runtime_error("a control holds a value that is not finite");
   o << v;
 }
@@ -177,7 +180,7 @@ double measure(Proc& proc)
                   + double(r[std::size_t(k)]) * r[std::size_t(k)]);
     best = std::max(best, e / window);
   }
-  if(!std::isfinite(best))
+  if(!ossia::safe_isfinite(best))
     throw std::runtime_error("the synth's output is not finite");
   return 10. * std::log10(std::max(best, 1e-12));
 }

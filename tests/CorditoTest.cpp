@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <memory>
@@ -15,6 +16,8 @@
 #include <string_view>
 #include <tuple>
 #include <vector>
+
+#include <ossia/math/safe_math.hpp>
 
 // Counts the allocations made while `g_watch` is set
 namespace
@@ -123,7 +126,7 @@ double estimateF0(const std::vector<double>& x, double fs, double expected)
     }
   const double a = ac(best - 1), b = ac(best), c = ac(best + 1);
   double d = (a - c) / (2. * (a - 2. * b + c));
-  if(!std::isfinite(d))
+  if(!ossia::safe_isfinite(d))
     d = 0.;
   return fs / (best + d);
 }
@@ -163,7 +166,7 @@ std::vector<double> slice(const std::vector<double>& x, double fs, double t0, do
 bool allFinite(const std::vector<double>& x)
 {
   for(double v : x)
-    if(!std::isfinite(v))
+    if(!ossia::safe_isfinite(v))
       return false;
   return true;
 }
@@ -1002,7 +1005,7 @@ double peakNear(const std::vector<double>& x, double fs, double f, double span, 
   const double h = span / 100.;
   const double a = goertzel(x, fs, best - h, t0, t1), b = bv, c = goertzel(x, fs, best + h, t0, t1);
   const double d = 0.5 * (a - c) / (a - 2. * b + c);
-  return std::isfinite(d) ? best + d * h : best;
+  return ossia::safe_isfinite(d) ? best + d * h : best;
 }
 
 //! Energy of the harmonics from n0 to n1, in dB relative to the first three
@@ -1641,7 +1644,7 @@ TEST_CASE("Cordito: any port value, any MIDI: finite, bounded, no allocation", "
     (*k)(halp::tick{frames});
     for(int i = 0; i < frames; i++)
     {
-      finite &= std::isfinite(l[std::size_t(i)]) && std::isfinite(r[std::size_t(i)]);
+      finite &= ossia::safe_isfinite(l[std::size_t(i)]) && ossia::safe_isfinite(r[std::size_t(i)]);
       bounded &= std::abs(l[std::size_t(i)]) <= 1. && std::abs(r[std::size_t(i)]) <= 1.;
     }
   }

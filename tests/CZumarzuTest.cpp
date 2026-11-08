@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -20,6 +21,8 @@
 #include <numbers>
 #include <random>
 #include <vector>
+
+#include <ossia/math/safe_math.hpp>
 
 // Counts the allocations made while `g_watch` is set
 namespace
@@ -249,7 +252,7 @@ std::vector<float> tail(const std::vector<float>& x, std::size_t from)
 
 bool allFinite(const std::vector<float>& x)
 {
-  return std::all_of(x.begin(), x.end(), [](float v) { return std::isfinite(v); });
+  return std::all_of(x.begin(), x.end(), [](float v) { return ossia::safe_isfinite(v); });
 }
 
 // ---- the chip -----------------------------------------------------------
@@ -977,8 +980,8 @@ TEST_CASE("Any input: finite, bounded, no allocation", "[czumarzu][robustness]")
       for(int i = 0; i < frames; i++)
       {
         const auto ii = std::size_t(i);
-        REQUIRE(std::isfinite(l[ii]));
-        REQUIRE(std::isfinite(r[ii]));
+        REQUIRE(ossia::safe_isfinite(l[ii]));
+        REQUIRE(ossia::safe_isfinite(r[ii]));
         REQUIRE(std::abs(l[ii]) <= 1.f);
         REQUIRE(std::abs(r[ii]) <= 1.f);
       }

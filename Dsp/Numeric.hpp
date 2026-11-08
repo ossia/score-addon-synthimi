@@ -7,36 +7,17 @@
  */
 
 #include <algorithm>
-#include <bit>
 #include <cstdint>
+
+#include <ossia/math/safe_math.hpp>
 
 namespace synthimi
 {
-namespace detail
-{
-//! The value, unknown to the optimiser: under -ffinite-math-only clang
-//! knows that a float's exponent is never all ones, and folds a test of its
-//! bits as it does std::isfinite. WebAssembly is left to the bit test alone.
-template <typename T>
-[[nodiscard]] inline T opaque(T x) noexcept
-{
-#if (defined(__GNUC__) || defined(__clang__)) && !defined(__EMSCRIPTEN__)
-  __asm__("" : "+r"(x));
-#endif
-  return x;
-}
-}
-
-//! std::isfinite on the bits: -ffinite-math-only (in -Ofast) lets the
-//! compiler fold std::isfinite, and x == x, to true
-[[nodiscard]] inline bool finite(float x) noexcept
-{
-  return (detail::opaque(std::bit_cast<std::uint32_t>(x)) & 0x7f800000u) != 0x7f800000u;
-}
+//! Not NaN nor infinite, also under -ffast-math, where std::isfinite is
+//! folded to true
 [[nodiscard]] inline bool finite(double x) noexcept
 {
-  constexpr std::uint64_t exponent = 0x7ff0000000000000ull;
-  return (detail::opaque(std::bit_cast<std::uint64_t>(x)) & exponent) != exponent;
+  return ossia::safe_isfinite(x);
 }
 
 //! A finite value clamped to [lo, hi]; `fallback` for NaN and infinities
