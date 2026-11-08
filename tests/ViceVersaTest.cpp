@@ -1341,6 +1341,37 @@ TEST_CASE("A note released in another play mode leaves no voice held",
   }
 }
 
+TEST_CASE("A note off in Mono releases a Poly voice of its own channel only",
+          "[viceversa][robustness]")
+{
+  auto p = plain(BankId::SineSaw, 0.f);
+  Rig rig;
+  // Voice 0 takes 64, the others the two 60s, one per channel
+  rig.send(0x90, 64, 100, p);
+  rig.send(0x90, 60, 100, p);
+  rig.send(0x91, 60, 100, p);
+  rig.run(0.05, p);
+  auto find = [&](int ch) -> const Synth::Voice* {
+    for(int i = 1; i < kMaxVoices; i++)
+    {
+      const auto& v = rig.s->voices[std::size_t(i)];
+      if(v.state == Synth::Voice::Active && v.note == 60 && v.channel == ch)
+        return &v;
+    }
+    return nullptr;
+  };
+  REQUIRE(find(0));
+  REQUIRE(find(1));
+
+  p.play = PlayMode::Mono;
+  rig.send(0x81, 60, 0, p);
+  rig.run(0.05, p);
+  CHECK(find(0)->held);
+  CHECK_FALSE(find(1)->held);
+  CHECK(find(0)->amp.stage != Adsr::Release);
+  CHECK(find(1)->amp.stage == Adsr::Release);
+}
+
 TEST_CASE("All notes off and reset all controllers lift the pedal", "[viceversa][robustness]")
 {
   const double fs = 48000.;
