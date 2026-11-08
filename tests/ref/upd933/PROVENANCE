@@ -1,0 +1,22 @@
+Repository: https://github.com/mamedev/mame
+Commit: 77a7670c51eb07e78b24c9b3c3dcb5d557ddd961 (2026-11-07)
+Curated source: src/devices/sound/upd933.cpp, src/devices/sound/upd933.h
+Upstream license designation: // license:BSD-3-Clause
+Upstream copyright holder: Devin Acker
+
+Used only by the tests, as the reference the phase distortion of CZumarzu is
+checked against. Not compiled into the add-on.
+
+Local changes:
+- Removed the MAME device, stream, timer and IRQ glue, and the two-byte serial
+  register protocol: a register is written with write(reg, value).
+- Replaced u8/u16/s16/u32/s32 with the <cstdint> types and BIT() with a local
+  helper of the same meaning.
+- machine().rand() is a local xorshift32; noise modulation is therefore not
+  the bit sequence MAME produces, only its statistics.
+- update() returns the sum of the eight voices, clamped as
+  stream.put_int_clamp(0, i, sample, 1 << 15) does.
+- The voice processing order, transfer functions, windows, volume and pitch
+  tables, envelopes and DCW limit are unchanged.
+
+No ROMs, firmware or patch data are included.

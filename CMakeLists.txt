@@ -165,6 +165,21 @@ avnd_score_plugin_add(
   OPTIMIZED
 )
 
+avnd_score_plugin_add(
+  BASE_TARGET score_addon_synthimi
+  SOURCES
+    CZumarzu/CZumarzu.hpp
+    CZumarzu/CZumarzuDsp.hpp
+    CZumarzu/EnvelopeWidget.hpp
+    CZumarzu/Dsp/Envelope.hpp
+    CZumarzu/Dsp/Halfband.hpp
+    CZumarzu/Dsp/PhaseMaps.hpp
+  TARGET czumarzu
+  MAIN_CLASS CZumarzu
+  NAMESPACE czumarzu
+  OPTIMIZED
+)
+
 # Kaboom's port count is large enough that instantiating it through the
 # boost.pfr fallback exhausts the compiler: g++-14 peaks at 40 GB and is
 # OOM-killed, and -fsyntax-only alone reaches 10 GB, so no optimisation flag
@@ -305,6 +320,21 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
   target_link_libraries(score_addon_synthimi_cordito_test PRIVATE
     Catch2::Catch2WithMain score_plugin_avnd)
   add_test(NAME score_addon_synthimi_cordito_test COMMAND score_addon_synthimi_cordito_test)
+
+  # CZumarzu: its waveforms against the uPD933 (tests/ref/upd933, from MAME),
+  # the antialiasing, tuning, voices, and robustness to any input. Optimised
+  # even in Debug builds: the spectral tests render several minutes of audio.
+  add_executable(score_addon_synthimi_czumarzu_test tests/CZumarzuTest.cpp)
+  target_include_directories(score_addon_synthimi_czumarzu_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    "${OSSIA_3RDPARTY_FOLDER}/kfr/include")
+  target_link_libraries(score_addon_synthimi_czumarzu_test PRIVATE
+    Catch2::Catch2WithMain score_plugin_avnd)
+  if(NOT MSVC)
+    target_compile_options(score_addon_synthimi_czumarzu_test PRIVATE -O2)
+  endif()
+  add_test(NAME score_addon_synthimi_czumarzu_test COMMAND score_addon_synthimi_czumarzu_test)
 
   # Same compiler requirement as the kaboom object itself
   if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
