@@ -4,7 +4,9 @@
 
 /* The graph of an eight-step envelope (Dsp/Envelope.hpp), bound to its four
  * ports: it edits the steps' rates and levels, and shows the sustain, end and
- * loop, which are menus and a toggle of their own.
+ * loop, which are menus and a toggle of their own. Grabbing a dimmed step,
+ * past the end, also moves the end to it: the envelope grows to that step,
+ * in the same gesture and undo step. The End menu shortens it.
  *
  * The envelope is the CZ's: each step a rate and a level, and a step's time
  * is its rate times the distance it moves. So it is edited as the CZ shows
@@ -104,20 +106,26 @@ struct StepEnvelopeWidget
   //! The ports: steps, sustain menu, end menu, loop. The host keeps them up
   //! to date, on a preset, an undo, automation
   std::tuple<std::vector<float>, int, int, bool> values{{}, 0, 0, false};
-  //! Only the steps are edited here
-  std::tuple<halp::transaction<std::vector<float>>> transactions;
+  //! The steps are edited here, and the end when a step past it is grabbed;
+  //! the sustain menu and the loop only shown
+  std::tuple<
+      halp::transaction<std::vector<float>>, halp::transaction<int>,
+      halp::transaction<int>>
+      transactions;
 
   EnvSpec spec = Kind::fallback();
 
   int drag{-1};
   int shown{-1};
+  int grown{-1}; // the end this drag moved to, or -1
   // Where the drag started, and its point then
   double fromX{}, fromY{};
   float fromRate{}, fromLevel{};
 
   auto& transaction() { return std::get<0>(transactions); }
+  auto& endTransaction() { return std::get<2>(transactions); }
 
-  //! The decoded copy follows the ports, except the dragged point, which leads
+  //! The decoded copy follows the ports, except the dragged point, which leads,
   void sync()
   {
     const auto [points, sustain, end, loop] = values;
@@ -126,6 +134,9 @@ struct StepEnvelopeWidget
     {
       next.rate = spec.rate;
       next.level = spec.level;
+      // As is the end, if this drag moved it
+      if(grown >= 0)
+        next.end = std::max(next.end, grown);
     }
     spec = next;
   }
@@ -323,8 +334,6 @@ struct StepEnvelopeWidget
     if(e.button != E::left || e.y < kPlotY || e.y > kPlotY + kPlotH + kNumH)
       return false;
     const int i = columnAt(e.x);
-    if(i > spec.end)
-      return false;
     shown = drag = i;
     fromX = e.x;
     fromY = e.y;
@@ -332,6 +341,14 @@ struct StepEnvelopeWidget
     fromLevel = spec.level[std::size_t(i)];
     if(transaction().start)
       transaction().start();
+    // A dimmed step: the envelope now reaches it
+    grown = -1;
+    if(i > spec.end)
+    {
+      spec.end = grown = i;
+      if(endTransaction().update)
+        endTransaction().update(i);
+    }
     return true;
   }
 
@@ -355,7 +372,7 @@ struct StepEnvelopeWidget
   {
     if(drag >= 0 && transaction().commit)
       transaction().commit();
-    drag = shown = -1;
+    drag = shown = grown = -1;
     return false;
   }
 
@@ -365,7 +382,7 @@ struct StepEnvelopeWidget
   {
     if(drag >= 0 && transaction().rollback)
       transaction().rollback();
-    drag = shown = -1;
+    drag = shown = grown = -1;
     sync();
   }
 };
