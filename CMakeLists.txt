@@ -180,6 +180,24 @@ avnd_score_plugin_add(
   OPTIMIZED
 )
 
+avnd_score_plugin_add(
+  BASE_TARGET score_addon_synthimi
+  SOURCES
+    ViceVersa/ViceVersa.hpp
+    ViceVersa/ViceVersaDsp.hpp
+    ViceVersa/VectorWidget.hpp
+    ViceVersa/Dsp/Banks.hpp
+    ViceVersa/Dsp/Ladder.hpp
+    ViceVersa/Dsp/Modulation.hpp
+    ViceVersa/Dsp/SampledBanks.hpp
+    ViceVersa/Dsp/Vector.hpp
+    ViceVersa/Dsp/Wavetable.hpp
+  TARGET viceversa
+  MAIN_CLASS ViceVersa
+  NAMESPACE viceversa
+  OPTIMIZED
+)
+
 # Kaboom's port count is large enough that instantiating it through the
 # boost.pfr fallback exhausts the compiler: g++-14 peaks at 40 GB and is
 # OOM-killed, and -fsyntax-only alone reaches 10 GB, so no optimisation flag
@@ -335,6 +353,19 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
     target_compile_options(score_addon_synthimi_czumarzu_test PRIVATE -O2)
   endif()
   add_test(NAME score_addon_synthimi_czumarzu_test COMMAND score_addon_synthimi_czumarzu_test)
+
+  # ViceVersa: the mixing law, the wave banks, aliasing, the mix envelope, the
+  # ladder filter, voices and robustness. Optimised, as CZumarzu's.
+  add_executable(score_addon_synthimi_viceversa_test tests/ViceVersaTest.cpp)
+  target_include_directories(score_addon_synthimi_viceversa_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${OSSIA_3RDPARTY_FOLDER}/kfr/include")
+  target_link_libraries(score_addon_synthimi_viceversa_test PRIVATE
+    Catch2::Catch2WithMain score_plugin_avnd)
+  if(NOT MSVC)
+    target_compile_options(score_addon_synthimi_viceversa_test PRIVATE -O2)
+  endif()
+  add_test(NAME score_addon_synthimi_viceversa_test COMMAND score_addon_synthimi_viceversa_test)
 
   # Same compiler requirement as the kaboom object itself
   if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
