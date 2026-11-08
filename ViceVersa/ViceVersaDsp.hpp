@@ -331,9 +331,11 @@ public:
     Ladder ladderL{}, ladderR{};
     Decimator2x<vec4> downL{}, downR{};
     //! The bank a source fades out of (Synth::fromBank): its tables for
-    //! this period, and the frame positions it was left at, in its frames
+    //! this period, the frame positions it was left at, in its frames, and
+    //! the lanes that played it then: 1, or 0 for a voice started since,
+    //! which plays the new bank alone
     std::array<Bank::Lanes, kSources> fromLanes{};
-    std::array<std::array<float, kLanes>, kSources> fromFrame{};
+    std::array<std::array<float, kLanes>, kSources> fromFrame{}, fromLive{};
     std::array<bool, kSources> fromHeard{};
     bool active{false};
   };
@@ -581,29 +583,22 @@ private:
       if(want == bank[s] || fromBank[s])
         continue;
       if(bank[s])
-        startBankFade(s, want);
+        startBankFade(s);
       bank[s] = want;
     }
   }
 
-  //! Source s from its bank to `to`, crossfaded: the old bank is read where
-  //! the frame positions were, and the frame ramps go on in the new bank's
-  //! frames, from the same place along it
-  void startBankFade(std::size_t s, const Bank* to) noexcept
+  //! Source s from its bank to the next, crossfaded: the old bank is read
+  //! where the frame positions were, and the frame ramps go on in the new
+  //! bank, whose frames are as many (kBankFrames, every bank)
+  void startBankFade(std::size_t s) noexcept
   {
     fromBank[s] = bank[s];
     fromGain[s] = 1.f;
-    const int was = bank[s]->frames() - 1, now = to->frames() - 1;
-    const float scale = was > 0 ? float(std::max(now, 0)) / float(was) : 0.f;
     for(auto& g : groups)
     {
-      auto& f = g.frame[s];
-      g.fromFrame[s] = f.value;
-      for(std::size_t l = 0; l < kLanes; l++)
-      {
-        f.value[l] *= scale;
-        f.step[l] *= scale;
-      }
+      g.fromFrame[s] = g.frame[s].value;
+      g.fromLive[s].fill(1.f);
     }
   }
 
@@ -630,6 +625,7 @@ private:
       g.inc[s][l] = 0.f;
       g.mip[s][l] = {};
       g.noiseLp[s][l] = 0.f;
+      g.fromLive[s][l] = 0.f;
       for(Ramp* r : {&g.weight[s], &g.frame[s], &g.noisePole[s], &g.noiseGain[s]})
         r->clear(l);
     }
@@ -1191,7 +1187,7 @@ private:
                 g, si, *fromBank[si], g.fromLanes[si],
                 kfr::read<kLanes>(g.fromFrame[si].data()), phase[si]);
             const float f = std::max(0.f, fromGain[si] - float(i) * bankFadeStep);
-            o += (old - o) * vec4(f);
+            o += (old - o) * (vec4(f) * kfr::read<kLanes>(g.fromLive[si].data()));
           }
           o *= g.weight[si].get();
           mixL += o * vec4(panL[si]);
