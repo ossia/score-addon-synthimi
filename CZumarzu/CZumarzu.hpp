@@ -29,13 +29,6 @@ static_assert(avnd::enum_names<PlayMode>().size() == kPlayModeCount);
 static_assert(avnd::enum_names<VibratoWave>().size() == kVibratoWaveCount);
 #endif
 
-inline EnvSpec DcaKind::fallback() { return LineParams::defaultDca(); }
-inline EnvSpec DcwKind::fallback() { return LineParams::defaultDcw(); }
-inline EnvSpec DcoKind::fallback() { return LineParams::defaultDco(); }
-
-inline constexpr halp::look small_knob{
-    .size = halp::control_size::compact, .widget = halp::control_widget::knob};
-inline constexpr halp::look dropdown{.widget = halp::control_widget::combo};
 consteval halp::look small_knob_as(std::string_view name)
 {
   auto l = halp::label_as(name);
@@ -54,9 +47,13 @@ consteval halp::look dropdown_as(std::string_view name)
 inline constexpr std::array<std::string_view, kWaveCount> kWaveLabels{
     "Saw", "Square", "Pulse", "Double Sine", "Saw-Pulse", "Reso Saw", "Reso Triangle",
     "Reso Trapezoid", "Double Pulse", "Reso Pulse", "Reso Double Saw", "VPS"};
-inline constexpr std::array<std::string_view, kSecondWaveCount> kSecondWaveLabels{
-    "Off", "Saw", "Square", "Pulse", "Double Sine", "Saw-Pulse", "Reso Saw", "Reso Triangle",
-    "Reso Trapezoid", "Double Pulse", "Reso Pulse", "Reso Double Saw", "VPS"};
+//! Off, then the same as wave 1's: SecondWave is Off then every Wave
+inline constexpr auto kSecondWaveLabels = [] {
+  std::array<std::string_view, kSecondWaveCount> l{"Off"};
+  for(int i = 0; i < kWaveCount; i++)
+    l[std::size_t(i + 1)] = kWaveLabels[std::size_t(i)];
+  return l;
+}();
 inline constexpr std::array<std::string_view, kLineModeCount> kLineModeLabels{
     "1", "2", "1 + 1'", "1 + 2'"};
 inline constexpr std::array<std::string_view, kModulationCount> kModulationLabels{
@@ -178,7 +175,7 @@ public:
 
     CZUMARZU_COMBO("Quality", Quality, kQualityLabels, Quality::Clean) quality;
     halp::knob_f32<"Spread", halp::range{0., 1., 0.3}> spread;
-    halp::knob_f32<"Level", halp::range{0., 2., 0.7}> level;
+    halp::knob_f32<"Level", halp::range{0., 4., 0.7}> level;
     halp::spinbox_i32<"Voices", halp::range{1, kMaxVoices, kMaxVoices}> voices;
   } inputs;
 
@@ -192,7 +189,7 @@ public:
   void prepare(halp::setup s) { synth.prepare(s.rate); }
 
   //! An envelope from its four ports
-  static EnvSpec readEnv(auto& steps, auto& sustain, auto& end, auto& loop,
+  [[nodiscard]] static EnvSpec readEnv(auto& steps, auto& sustain, auto& end, auto& loop,
                          const EnvSpec& fallback) noexcept
   {
     return EnvSpec::from(
@@ -209,13 +206,13 @@ public:
   L.dcwKeyFollow = in.l##N##_dcw_kf.value;                                                \
   L.dcaKeyFollow = in.l##N##_dca_kf.value;                                                \
   L.dca = readEnv(in.l##N##_dca, in.l##N##_dca_sustain, in.l##N##_dca_end,                \
-                  in.l##N##_dca_loop, LineParams::defaultDca());                          \
+                  in.l##N##_dca_loop, DcaKind::fallback());                               \
   L.dcw = readEnv(in.l##N##_dcw, in.l##N##_dcw_sustain, in.l##N##_dcw_end,                \
-                  in.l##N##_dcw_loop, LineParams::defaultDcw());                          \
+                  in.l##N##_dcw_loop, DcwKind::fallback());                               \
   L.dco = readEnv(in.l##N##_dco, in.l##N##_dco_sustain, in.l##N##_dco_end,                \
-                  in.l##N##_dco_loop, LineParams::defaultDco());
+                  in.l##N##_dco_loop, DcoKind::fallback());
 
-  Params params() const noexcept
+  [[nodiscard]] Params params() const noexcept
   {
     Params p;
     const auto& in = inputs;
@@ -282,9 +279,6 @@ public:
 
   //! Line 2 and its modulation only sound in the two-line modes
   using two_lines = halp::enabled_when<&ins::mode, LineMode::Line1Doubled, LineMode::Line1And2>;
-  //! The formant only shapes VPS
-  using vps_1 = halp::enabled_when<&ins::l1_wave1, Wave::Vps>;
-  using vps_2 = halp::enabled_when<&ins::l2_wave1, Wave::Vps>;
 
   struct ui
   {
@@ -343,12 +337,9 @@ public:
       halp_meta(layout, halp::layouts::hbox)                                          \
       halp::control<&ins::l##N##_wave1, dropdown_as("Wave")> wave1;                   \
       halp::control<&ins::l##N##_wave2, dropdown_as("Wave 2")> wave2;                 \
-      struct                                                                          \
-      {                                                                               \
-        halp_meta(layout, halp::layouts::container)                                   \
-        static constexpr auto condition() { return vps_##N{}; }                        \
-        halp::control<&ins::l##N##_formant, small_knob_as("Formant")> formant;        \
-      } formant;                                                                      \
+      /* Only VPS has a formant, as wave 1 or wave 2: a condition tests a */          \
+      /* single port, so it stays enabled */                                          \
+      halp::control<&ins::l##N##_formant, small_knob_as("Formant")> formant;          \
       halp::control<&ins::l##N##_level, small_knob_as("Level")> level;                \
       halp::control<&ins::l##N##_dco_depth, small_knob_as("DCO Range")> dco_depth;    \
       halp::control<&ins::l##N##_dcw_depth, small_knob_as("DCW Amount")> dcw_depth;   \

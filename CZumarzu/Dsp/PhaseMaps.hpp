@@ -37,11 +37,13 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <vector>
+#include <numbers>
 
 namespace czumarzu
 {
 using vec4 = kfr::vec<float, 4>;
+inline constexpr float kPi = std::numbers::pi_v<float>;
+inline constexpr float kTwoPi = 2.f * std::numbers::pi_v<float>;
 
 //! The CZ's eight waveforms first, in the panel's order, then the chip's
 //! undocumented ones and Vector Phaseshaping. Stored by index: append only.
@@ -62,7 +64,7 @@ enum class Wave : int
 };
 inline constexpr int kWaveCount = 12;
 
-constexpr bool resonant(Wave w) noexcept
+[[nodiscard]] constexpr bool resonant(Wave w) noexcept
 {
   return w == Wave::ResoSaw || w == Wave::ResoTriangle || w == Wave::ResoTrapezoid
          || w == Wave::ResoPulse || w == Wave::ResoDoubleSaw;
@@ -84,9 +86,11 @@ inline constexpr float kMinPivot = 8.f / 2048.f;
 //! and aliases around 3 kHz.
 inline constexpr float kMaxResoCycles = 0.2f;
 
-/*! sin and cos of 2 pi t together, for t in [0, 1): one reduction for both.
- *  Folded to an eighth of a turn's quadrant symmetry, |angle| <= pi/2, where
- *  the Taylor series to degree 11 and 12 are within 6e-8.
+/*! sin and cos of 2 pi t together, for any t: one reduction for both.
+ *  Folded by the quadrants' symmetry to r in [0, 1/4] of a turn, where two
+ *  minimax polynomials in r, odd of degree 9 and even of degree 8 (fitted by
+ *  Remez exchange, cos(0) kept at 1), are within 3.4e-9 and 5.3e-8: the
+ *  tests measure them, rounding included.
  */
 inline void sincos2pi(vec4 t, vec4& s, vec4& c) noexcept
 {
@@ -95,33 +99,23 @@ inline void sincos2pi(vec4 t, vec4& s, vec4& c) noexcept
   const vec4 au = kfr::abs(u);
   // cos(2 pi u) = -cos(2 pi (0.5 - |u|)), sin keeps its sign
   const auto far = au > quarter;
-  const vec4 r = kfr::select(far, half - au, au);
-  const vec4 x = vec4(6.28318530717958647692f) * r; // [0, pi/2]
-  const vec4 x2 = x * x;
+  const vec4 r = kfr::select(far, half - au, au); // [0, 1/4]
+  const vec4 r2 = r * r;
   const vec4 sn
-      = x
-        * (one
-           + x2
-                 * (vec4(-1.f / 6.f)
-                    + x2
-                          * (vec4(1.f / 120.f)
-                             + x2
-                                   * (vec4(-1.f / 5040.f)
-                                      + x2 * (vec4(1.f / 362880.f)
-                                              + x2 * vec4(-1.f / 39916800.f))))));
+      = r
+        * (vec4(6.2831851600897227f)
+           + r2
+                 * (vec4(-41.341655031479419f)
+                    + r2
+                          * (vec4(81.601004077356553f)
+                             + r2 * (vec4(-76.549782387613466f) + r2 * vec4(39.536706762014836f)))));
   const vec4 cs
       = one
-        + x2
-              * (vec4(-0.5f)
-                 + x2
-                       * (vec4(1.f / 24.f)
-                          + x2
-                                * (vec4(-1.f / 720.f)
-                                   + x2
-                                         * (vec4(1.f / 40320.f)
-                                            + x2
-                                                  * (vec4(-1.f / 3628800.f)
-                                                     + x2 * vec4(1.f / 479001600.f))))));
+        + r2
+              * (vec4(-19.739182072579625f)
+                 + r2
+                       * (vec4(64.935221469818272f)
+                          + r2 * (vec4(-85.254007539277524f) + r2 * vec4(56.340648700450132f))));
   s = kfr::select(u < vec4(0.f), -sn, sn);
   c = kfr::select(far, -cs, cs);
 }
@@ -145,7 +139,7 @@ inline void fill(Shape& s, int from, vec4 a, vec4 b, vec4 c = vec4(1.f), vec4 e 
  *  k:     resonance multiple, 1 + 16 DCW
  *  v:     VPS's height (0.5 with a pivot of 0.5 is a sine)
  */
-inline Shape shapeOf(Wave w, vec4 pivot, vec4 k, vec4 v) noexcept
+[[nodiscard]] inline Shape shapeOf(Wave w, vec4 pivot, vec4 k, vec4 v) noexcept
 {
   using detail::fill;
   const vec4 zero(0.f), half(0.5f), one(1.f), two(2.f);
@@ -249,7 +243,7 @@ inline Shape shapeOf(Wave w, vec4 pivot, vec4 k, vec4 v) noexcept
  *  chip's own limit, which it applies to every waveform alike, lets the
  *  double sine move twice as fast and VPS faster still with its height
  */
-inline vec4 pivotSamples(Wave w, vec4 v) noexcept
+[[nodiscard]] inline vec4 pivotSamples(Wave w, vec4 v) noexcept
 {
   switch(w)
   {
@@ -262,7 +256,7 @@ inline vec4 pivotSamples(Wave w, vec4 v) noexcept
   }
 }
 
-inline Shape selectShape(const kfr::mask<float, 4>& m, const Shape& x, const Shape& y) noexcept
+[[nodiscard]] inline Shape selectShape(const kfr::mask<float, 4>& m, const Shape& x, const Shape& y) noexcept
 {
   Shape s;
   for(int i = 0; i < 3; i++)
@@ -278,7 +272,7 @@ inline Shape selectShape(const kfr::mask<float, 4>& m, const Shape& x, const Sha
 }
 
 //! The first breakpoint after x, or 1
-inline vec4 nextBreak(const Shape& s, vec4 x) noexcept
+[[nodiscard]] inline vec4 nextBreak(const Shape& s, vec4 x) noexcept
 {
   return kfr::select(
       x < s.br[0], s.br[0],
@@ -286,7 +280,7 @@ inline vec4 nextBreak(const Shape& s, vec4 x) noexcept
 }
 
 //! The segment's coefficient at x
-inline vec4 pick(const Shape& s, const vec4 (&c)[4], vec4 x) noexcept
+[[nodiscard]] inline vec4 pick(const Shape& s, const vec4 (&c)[4], vec4 x) noexcept
 {
   return kfr::select(
       x >= s.br[2], c[3], kfr::select(x >= s.br[1], c[2], kfr::select(x >= s.br[0], c[1], c[0])));
@@ -298,7 +292,7 @@ inline vec4 pick(const Shape& s, const vec4 (&c)[4], vec4 x) noexcept
  *  The windows break at 0.5 at most; the waveforms that do not already break
  *  there have one breakpoint, so the union still fits in three.
  */
-inline Shape windowed(Wave w, const Shape& wave, const Shape& window) noexcept
+[[nodiscard]] inline Shape windowed(Wave w, const Shape& wave, const Shape& window) noexcept
 {
   const vec4 half(0.5f), one(1.f);
   Shape s;
@@ -328,23 +322,23 @@ inline Shape windowed(Wave w, const Shape& wave, const Shape& window) noexcept
 }
 
 //! Pointwise y(x), for tests and the first sample of a note
-inline vec4 evaluate(const Shape& s, vec4 x) noexcept
+[[nodiscard]] inline vec4 evaluate(const Shape& s, vec4 x) noexcept
 {
   const vec4 a = pick(s, s.a, x), b = pick(s, s.b, x);
   const vec4 c = pick(s, s.c, x), e = pick(s, s.e, x);
   vec4 t = a + b * x;
   t = t - kfr::floor(t);
-  return (vec4(1.f) - kfr::cos(vec4(6.28318530717958647692f) * t)) * (c + e * x) - vec4(1.f);
+  return (vec4(1.f) - kfr::cos(vec4(kTwoPi) * t)) * (c + e * x) - vec4(1.f);
 }
 
 //! The line's window: that of its first resonant waveform, if any
-inline int lineWindow(Wave a, Wave b) noexcept
+[[nodiscard]] inline int lineWindow(Wave a, Wave b) noexcept
 {
   return resonant(a) ? int(a) : resonant(b) ? int(b) : -1;
 }
 
 //! The shape a line plays for waveform w, under the line's window
-inline Shape lineShape(Wave w, int window, vec4 pivot, vec4 k, vec4 v) noexcept
+[[nodiscard]] inline Shape lineShape(Wave w, int window, vec4 pivot, vec4 k, vec4 v) noexcept
 {
   if(window < 0)
     return shapeOf(w, pivot, k, v);
@@ -356,19 +350,16 @@ inline Shape lineShape(Wave w, int window, vec4 pivot, vec4 k, vec4 v) noexcept
 /*! The integral of y over [m - L/2, m + L/2], all of it inside one segment
  *  (the one holding m).
  */
-inline vec4 integral(const Shape& s, vec4 m, vec4 L) noexcept
+[[nodiscard]] inline vec4 integral(const Shape& s, vec4 m, vec4 L) noexcept
 {
   const vec4 one(1.f);
   const vec4 a = pick(s, s.a, m), b = pick(s, s.b, m);
   const vec4 c = pick(s, s.c, m), e = pick(s, s.e, m);
 
-  vec4 t = a + b * m;
-  t = t - kfr::floor(t);
-  const vec4 th = vec4(6.28318530717958647692f) * t;
-  const vec4 cm = kfr::cos(th);
-  const vec4 sm = kfr::sin(th);
+  vec4 sm, cm;
+  sincos2pi(a + b * m, sm, cm);
 
-  const vec4 z = vec4(3.14159265358979323846f) * b * L;
+  const vec4 z = vec4(kPi) * b * L;
   vec4 S, R;
   if(kfr::all(kfr::abs(z) <= one)) [[likely]]
   {
@@ -389,7 +380,8 @@ inline vec4 integral(const Shape& s, vec4 m, vec4 L) noexcept
   }
   else
   {
-    const vec4 sz = kfr::sin(z), cz = kfr::cos(z);
+    vec4 sz, cz;
+    sincos2pi(vec4(0.5f) * b * L, sz, cz);
     const auto small = kfr::abs(z) < vec4(1e-4f);
     const vec4 zs = kfr::select(small, one, z);
     S = kfr::select(small, one, sz / zs);
@@ -401,12 +393,29 @@ inline vec4 integral(const Shape& s, vec4 m, vec4 L) noexcept
   return L * mean;
 }
 
+/*! The mean of y over a whole cycle: its DC, which the pulses and the
+ *  windows have plenty of, and which moves with the DCW
+ */
+[[nodiscard]] inline vec4 cycleMean(const Shape& s) noexcept
+{
+  const vec4 half(0.5f);
+  vec4 acc(0.f), lo(0.f);
+  for(int i = 0; i < 4; i++)
+  {
+    const vec4 hi = i < 3 ? s.br[i] : vec4(1.f);
+    const vec4 L = kfr::max(hi - lo, vec4(0.f));
+    acc += integral(s, lo + half * L, L);
+    lo = hi;
+  }
+  return acc;
+}
+
 /*! The mean of the waveform over one sample: from phase x0 (in [0, 1)) over
  *  dx (in (0, 0.5)). `here` is the shape of the cycle x0 is in, `next` the
  *  shape of the cycle after the wrap: the CZ alternates its two waveforms
  *  from one cycle to the next.
  */
-inline vec4 sampleMean(const Shape& here, const Shape& next, bool sameShape, vec4 x0, vec4 dx)
+[[nodiscard]] inline vec4 sampleMean(const Shape& here, const Shape& next, bool sameShape, vec4 x0, vec4 dx)
     noexcept
 {
   const vec4 one(1.f), zero(0.f);
@@ -452,7 +461,7 @@ struct Moments
   vec4 i0, i1;
 };
 
-inline Moments moments(const Shape& s, vec4 m, vec4 L) noexcept
+[[nodiscard]] inline Moments moments(const Shape& s, vec4 m, vec4 L) noexcept
 {
   const vec4 one(1.f);
   const vec4 a = pick(s, s.a, m), b = pick(s, s.b, m);
@@ -463,7 +472,7 @@ inline Moments moments(const Shape& s, vec4 m, vec4 L) noexcept
 
   // Over t in [-h, h], z = B h:
   //   mean(cos(Bt)) = S, mean(t sin(Bt)) = h R, mean(t^2 cos(Bt)) = h^2 P
-  const vec4 z = vec4(3.14159265358979323846f) * b * L;
+  const vec4 z = vec4(kPi) * b * L;
   vec4 S, R, P;
   if(kfr::all(kfr::abs(z) <= one)) [[likely]]
   {
@@ -490,7 +499,8 @@ inline Moments moments(const Shape& s, vec4 m, vec4 L) noexcept
   }
   else
   {
-    const vec4 sz = kfr::sin(z), cz = kfr::cos(z);
+    vec4 sz, cz;
+    sincos2pi(vec4(0.5f) * b * L, sz, cz);
     const auto small = kfr::abs(z) < vec4(1e-3f);
     const vec4 zs = kfr::select(small, one, z);
     const vec4 z2 = zs * zs;
@@ -517,7 +527,7 @@ inline Moments moments(const Shape& s, vec4 m, vec4 L) noexcept
  *  `here`: the shape of the cycle x0 is in; `other`: the shape of the cycles
  *  either side of it, which the window can reach.
  */
-inline vec4
+[[nodiscard]] inline vec4
 sampleTriangle(const Shape& here, const Shape& other, bool sameShape, vec4 x0, vec4 dx)
     noexcept
 {
@@ -595,7 +605,7 @@ struct Jumps
 namespace detail
 {
 //! y at x with the coefficients of the segment holding m
-inline vec4 valueAt(const Shape& s, vec4 m, vec4 x) noexcept
+[[nodiscard]] inline vec4 valueAt(const Shape& s, vec4 m, vec4 x) noexcept
 {
   const vec4 a = pick(s, s.a, m), b = pick(s, s.b, m);
   const vec4 c = pick(s, s.c, m), e = pick(s, s.e, m);
@@ -605,13 +615,13 @@ inline vec4 valueAt(const Shape& s, vec4 m, vec4 x) noexcept
 }
 }
 
+//! `inv` is 1 / dx, which the caller has once per control tick
 template <bool FindJumps = false>
-inline Halves sampleInterval(
-    const Shape& here, const Shape& next, bool sameShape, vec4 x0, vec4 dx,
+[[nodiscard]] inline Halves sampleInterval(
+    const Shape& here, const Shape& next, bool sameShape, vec4 x0, vec4 dx, vec4 inv,
     Jumps* jumps = nullptr) noexcept
 {
   const vec4 one(1.f), zero(0.f), half(0.5f);
-  const vec4 inv = one / dx;
   const vec4 inv2 = inv * inv;
   const vec4 xEnd = x0 + dx;
   vec4 start = x0;
@@ -626,13 +636,19 @@ inline Halves sampleInterval(
     const vec4 offset = kfr::select(wrapped, one, zero);
     const vec4 local = start - offset;
     vec4 end = xEnd;
-    const Shape& s0 = here;
+    // Lanes past the wrap read the next cycle's shape: a copy only when the
+    // lanes disagree
     Shape sel;
-    const Shape* s = &s0;
-    if(!sameShape)
+    const Shape* s = &here;
+    if(!sameShape && kfr::any(wrapped))
     {
-      sel = selectShape(wrapped, next, here);
-      s = &sel;
+      if(kfr::all(wrapped))
+        s = &next;
+      else
+      {
+        sel = selectShape(wrapped, next, here);
+        s = &sel;
+      }
     }
     if(piece < 2)
       end = kfr::min(xEnd, nextBreak(*s, local) + offset);
@@ -671,6 +687,9 @@ inline Halves sampleInterval(
  *  compensation filter flattens; above it, what would fold back is gone. As
  *  blargg's band-limited step synthesis in the chip emulations, but against
  *  the step already there. Tabulated over u = (sample - jump), in samples.
+ *
+ *  build() takes a few milliseconds and does not depend on the rate: the
+ *  synth calls it once, in its first prepare().
  */
 class StepResidual
 {
@@ -680,13 +699,7 @@ public:
   static constexpr int kPerSample = 128;
   static constexpr int kSize = 2 * kHalf * kPerSample + 1;
 
-  static const StepResidual& instance()
-  {
-    static const StepResidual r;
-    return r;
-  }
-
-  float operator()(float u) const noexcept
+  [[nodiscard]] float operator()(float u) const noexcept
   {
     const float x = (u + float(kHalf)) * float(kPerSample);
     if(!(x > 0.f) || x >= float(kSize - 1))
@@ -696,33 +709,14 @@ public:
     return table[std::size_t(i)] + f * (table[std::size_t(i + 1)] - table[std::size_t(i)]);
   }
 
-private:
-  static double triangleStep(double u)
+  void build() noexcept
   {
-    return u <= -1. ? 0.
-           : u < 0. ? 0.5 * (u + 1.) * (u + 1.)
-           : u < 1. ? 1. - 0.5 * (1. - u) * (1. - u)
-                    : 1.;
-  }
-
-  static double besselI0(double x)
-  {
-    double sum = 1., term = 1.;
-    for(int k = 1; k < 40; k++)
-    {
-      term *= (x / (2. * k)) * (x / (2. * k));
-      sum += term;
-    }
-    return sum;
-  }
-
-  StepResidual()
-  {
-    constexpr double pi = 3.14159265358979323846;
+    constexpr double pi = std::numbers::pi;
     constexpr double beta = 8.;
-    // The low-pass, on the table's grid, normalised to a unit sum
-    const int taps = 2 * kSinc * kPerSample + 1;
-    std::vector<double> lp(static_cast<std::size_t>(taps));
+    // The low-pass, on the table's grid, normalised to a unit sum. On the
+    // stack, in single precision: 8 KB, and no allocation
+    constexpr int taps = 2 * kSinc * kPerSample + 1;
+    std::array<float, taps> lp;
     double sum = 0.;
     for(int i = 0; i < taps; i++)
     {
@@ -731,11 +725,9 @@ private:
       const double sinc = std::abs(x) < 1e-12 ? 1. : std::sin(pi * x) / (pi * x);
       const double r = t / kSinc;
       const double w = besselI0(beta * std::sqrt(std::max(0., 1. - r * r))) / besselI0(beta);
-      lp[std::size_t(i)] = sinc * w;
+      lp[std::size_t(i)] = float(sinc * w);
       sum += lp[std::size_t(i)];
     }
-    for(auto& v : lp)
-      v /= sum;
 
     // The target step: the triangle's, through the low-pass
     for(int i = 0; i < kSize; i++)
@@ -745,10 +737,30 @@ private:
       for(int j = 0; j < taps; j++)
       {
         const double tau = double(j - kSinc * kPerSample) / kPerSample;
-        acc += lp[std::size_t(j)] * triangleStep(u - tau);
+        acc += double(lp[std::size_t(j)]) * triangleStep(u - tau);
       }
-      table[std::size_t(i)] = float(acc - triangleStep(u));
+      table[std::size_t(i)] = float(acc / sum - triangleStep(u));
     }
+  }
+
+private:
+  [[nodiscard]] static double triangleStep(double u) noexcept
+  {
+    return u <= -1. ? 0.
+           : u < 0. ? 0.5 * (u + 1.) * (u + 1.)
+           : u < 1. ? 1. - 0.5 * (1. - u) * (1. - u)
+                    : 1.;
+  }
+
+  [[nodiscard]] static double besselI0(double x) noexcept
+  {
+    double sum = 1., term = 1.;
+    for(int k = 1; k < 40; k++)
+    {
+      term *= (x / (2. * k)) * (x / (2. * k));
+      sum += term;
+    }
+    return sum;
   }
 
   std::array<float, kSize> table{};

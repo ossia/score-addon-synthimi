@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <initializer_list>
+#include <utility>
 #include <vector>
 
 namespace czumarzu
@@ -34,11 +36,43 @@ inline constexpr int kEnvSize = 2 * kSteps;
 
 inline constexpr double kSlowest = 30.;   // seconds for a full-scale move, rate 0
 inline constexpr double kFastest = 0.0005; // rate 1
+//! ln(kFastest / kSlowest), checked by the tests: std::log is no constant
+//! expression before C++26
+inline constexpr double kLnRateSpan = -11.002099841204238;
+
+//! The chip's DCA is linear in decibels: level 1 is 0 dB, level 0 this far down
+inline constexpr float kDcaRangeDb = 78.27f;
+//! Decibels to the exponent of e: ln(10) / 20
+inline constexpr float kNepersPerDb = 0.11512925464970229f;
+
+namespace detail
+{
+//! e^x, as a constant expression: halved until the series converges at once,
+//! then squared back, within 1e-14 over the rates' range
+[[nodiscard]] constexpr double exp(double x) noexcept
+{
+  int halvings = 0;
+  while(x < -0.5 || x > 0.5)
+  {
+    x *= 0.5;
+    halvings++;
+  }
+  double term = 1., sum = 1.;
+  for(int i = 1; i < 20; i++)
+  {
+    term *= x / i;
+    sum += term;
+  }
+  while(halvings-- > 0)
+    sum *= sum;
+  return sum;
+}
+}
 
 //! Seconds a full-scale move takes at normalised rate r
-inline double stepTime(double r) noexcept
+[[nodiscard]] constexpr double stepTime(double r) noexcept
 {
-  return kSlowest * std::pow(kFastest / kSlowest, std::clamp(r, 0., 1.));
+  return kSlowest * detail::exp(kLnRateSpan * std::clamp(r, 0., 1.));
 }
 
 struct EnvSpec
@@ -48,15 +82,36 @@ struct EnvSpec
   int sustain{-1}; // -1: none
   int end{0};
   bool loop{false};
+  //! Full-scale moves per second of each step, 1 / stepTime(rate): kept by
+  //! sanitize(), so the envelopes never compute a power at control rate
+  std::array<double, kSteps> speed{};
 
   //! The step after which a loop goes back to the first
-  int loopEnd() const noexcept { return sustain >= 0 ? sustain : end; }
+  [[nodiscard]] constexpr int loopEnd() const noexcept { return sustain >= 0 ? sustain : end; }
+
+  /*! Rates and levels in [0, 1] (0.5 and 0 for what is not, NaN too), the end
+   *  a step, the sustain none or a step up to the end; then the speeds.
+   */
+  constexpr void sanitize() noexcept
+  {
+    for(int i = 0; i < kSteps; i++)
+    {
+      auto& r = rate[std::size_t(i)];
+      auto& l = level[std::size_t(i)];
+      r = (r >= 0.f && r <= 1.f) ? r : 0.5f;
+      l = (l >= 0.f && l <= 1.f) ? l : 0.f;
+      speed[std::size_t(i)] = 1. / stepTime(r);
+    }
+    end = std::clamp(end, 0, kSteps - 1);
+    if(sustain < -1 || sustain > end)
+      sustain = -1;
+  }
 
   /*! From the ports: the steps (`fallback`'s if not kEnvSize values), the
    *  sustain menu (0 none, else the step + 1), the end menu (the step), the
    *  loop. A sustain past the end is none.
    */
-  static EnvSpec from(
+  [[nodiscard]] static EnvSpec from(
       const std::vector<float>& points, int sustainItem, int endItem, bool loop,
       const EnvSpec& fallback) noexcept
   {
@@ -65,21 +120,19 @@ struct EnvSpec
     {
       for(int i = 0; i < kSteps; i++)
       {
-        const float r = points[std::size_t(2 * i)], l = points[std::size_t(2 * i + 1)];
-        e.rate[std::size_t(i)] = (r >= 0.f && r <= 1.f) ? r : 0.5f; // also NaN
-        e.level[std::size_t(i)] = (l >= 0.f && l <= 1.f) ? l : 0.f;
+        e.rate[std::size_t(i)] = points[std::size_t(2 * i)];
+        e.level[std::size_t(i)] = points[std::size_t(2 * i + 1)];
       }
     }
-    e.end = std::clamp(endItem, 0, kSteps - 1);
+    e.end = endItem;
     e.sustain = std::clamp(sustainItem, 0, kSteps) - 1;
-    if(e.sustain > e.end)
-      e.sustain = -1;
     e.loop = loop;
+    e.sanitize();
     return e;
   }
 
   //! The steps' port
-  std::vector<float> points() const
+  [[nodiscard]] std::vector<float> points() const
   {
     std::vector<float> v(kEnvSize, 0.f);
     for(int i = 0; i < kSteps; i++)
@@ -90,12 +143,12 @@ struct EnvSpec
     return v;
   }
   //! The sustain menu's item: 0 none, else the step + 1
-  int sustainItem() const noexcept { return sustain + 1; }
+  [[nodiscard]] constexpr int sustainItem() const noexcept { return sustain + 1; }
 
   //! Up to `rate` at `level` for each (rate, level) given, sustain and end
-  static EnvSpec make(
+  [[nodiscard]] static constexpr EnvSpec make(
       std::initializer_list<std::pair<float, float>> steps, int sustain, int end,
-      bool loop = false)
+      bool loop = false) noexcept
   {
     EnvSpec e;
     int i = 0;
@@ -111,9 +164,16 @@ struct EnvSpec
     e.sustain = sustain;
     e.end = end;
     e.loop = loop;
+    e.sanitize();
     return e;
   }
 };
+
+//! The patch's envelopes before any is drawn, and what the ports fall back to
+inline constexpr EnvSpec kDefaultDca = EnvSpec::make({{0.95f, 1.f}, {0.62f, 0.f}}, 0, 1);
+inline constexpr EnvSpec kDefaultDcw
+    = EnvSpec::make({{0.9f, 0.7f}, {0.45f, 0.35f}, {0.6f, 0.f}}, 1, 2);
+inline constexpr EnvSpec kDefaultDco = EnvSpec::make({{1.f, 0.f}}, -1, 0);
 
 //! One running envelope. Scalar, at control rate.
 struct EnvState
@@ -147,7 +207,7 @@ struct EnvState
       step = std::max(step, s.end);
   }
 
-  /*! Advances by `n` samples. `perSample` is 1 / (seconds * rate), times the
+  /*! Advances by `n` samples. `perSample` is 1 / the sample rate, times the
    *  key follow. `gate`: the key (or pedal) still holds the note.
    *  After the end step, when released, the level keeps falling to 0 at the
    *  end step's rate: a voice never stays on forever.
@@ -163,7 +223,7 @@ struct EnvState
       const int st = std::clamp(step, 0, kSteps - 1);
       const float target = past ? 0.f : s.level[std::size_t(st)];
       const double speed
-          = perSample / stepTime(s.rate[std::size_t(std::min(st, s.end))]);
+          = perSample * s.speed[std::size_t(std::clamp(std::min(st, s.end), 0, kSteps - 1))];
       const double dist = std::abs(double(target) - value);
       const double need = dist / speed;
       if(need > budget)
@@ -199,6 +259,6 @@ struct EnvState
   }
 
   //! At the end, nothing left to sound
-  bool silent() const noexcept { return done && value <= 1e-4f; }
+  [[nodiscard]] bool silent() const noexcept { return done && value <= 1e-4f; }
 };
 }

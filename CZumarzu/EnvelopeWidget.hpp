@@ -79,7 +79,7 @@ inline void stroke(Ctx& ctx, const Rgba& c)
 
 /*! Kind gives:
  *   static constexpr const char* title;
- *   static EnvSpec fallback();
+ *   static constexpr EnvSpec fallback();
  *   static std::string levelText(float);
  */
 template <typename Kind>
@@ -131,25 +131,25 @@ struct StepEnvelopeWidget
   }
 
   // ---- geometry of a step ----------------------------------------------
-  static double colX(int i) { return kPlotX + kCol * i; }
+  [[nodiscard]] static constexpr double colX(int i) noexcept { return kPlotX + kCol * i; }
   //! Fastest at the left of the column, slowest at the right
-  static double rateX(int i, float rate)
+  [[nodiscard]] static double rateX(int i, float rate) noexcept
   {
     return colX(i) + kInset + (kCol - 2. * kInset) * (1. - std::clamp(double(rate), 0., 1.));
   }
-  static double levelY(float level)
+  [[nodiscard]] static double levelY(float level) noexcept
   {
     return kPlotY + 3. + (kPlotH - 6.) * (1. - std::clamp(double(level), 0., 1.));
   }
 
   //! A step's time: its distance at its rate
-  double seconds(int i) const
+  [[nodiscard]] double seconds(int i) const noexcept
   {
     const float prev = i == 0 ? 0.f : spec.level[std::size_t(i - 1)];
     return std::abs(spec.level[std::size_t(i)] - prev) * stepTime(spec.rate[std::size_t(i)]);
   }
 
-  static std::string secondsText(double t)
+  [[nodiscard]] static std::string secondsText(double t)
   {
     char buf[24];
     if(t < 0.0095)
@@ -310,22 +310,24 @@ struct StepEnvelopeWidget
   }
 
   // ---- interaction ----------------------------------------------------
-  static int columnAt(double x)
+  [[nodiscard]] static int columnAt(double x) noexcept
   {
     return std::clamp(int((x - kPlotX) / kCol), 0, kSteps - 1);
   }
 
-  bool mouse_press(double x, double y)
+  // The host's custom_mouse_event: x, y, the button. Only the left one drags.
+  bool mouse_press(const auto& e)
   {
+    using E = std::decay_t<decltype(e)>;
     sync();
-    if(y < kPlotY || y > kPlotY + kPlotH + kNumH)
+    if(e.button != E::left || e.y < kPlotY || e.y > kPlotY + kPlotH + kNumH)
       return false;
-    const int i = columnAt(x);
+    const int i = columnAt(e.x);
     if(i > spec.end)
       return false;
     shown = drag = i;
-    fromX = x;
-    fromY = y;
+    fromX = e.x;
+    fromY = e.y;
     fromRate = spec.rate[std::size_t(i)];
     fromLevel = spec.level[std::size_t(i)];
     if(transaction().start)
@@ -333,49 +335,58 @@ struct StepEnvelopeWidget
     return true;
   }
 
-  bool mouse_move(double x, double y)
+  bool mouse_move(const auto& e)
   {
     if(drag < 0)
       return false;
     const auto i = std::size_t(drag);
     // Right is slower, up is louder: the scales of rateX and levelY
     spec.rate[i] = float(std::clamp(
-        double(fromRate) - (x - fromX) / (kCol - 2. * kInset), 0., 1.));
+        double(fromRate) - (e.x - fromX) / (kCol - 2. * kInset), 0., 1.));
     spec.level[i] = float(std::clamp(
-        double(fromLevel) - (y - fromY) / (kPlotH - 6.), 0., 1.));
+        double(fromLevel) - (e.y - fromY) / (kPlotH - 6.), 0., 1.));
     if(transaction().update)
       transaction().update(spec.points());
     return true;
   }
 
-  bool mouse_release(double, double)
+  //! The title goes back to the totals
+  bool mouse_release(const auto&)
   {
     if(drag >= 0 && transaction().commit)
       transaction().commit();
-    drag = -1;
+    drag = shown = -1;
     return false;
   }
 
-  void reset() { drag = -1; }
+  //! The host's, on transport stop: a drag in progress is undone, not left
+  //! with its transaction open
+  void reset()
+  {
+    if(drag >= 0 && transaction().rollback)
+      transaction().rollback();
+    drag = shown = -1;
+    sync();
+  }
 };
 
 struct DcaKind
 {
   static constexpr const char* title = "DCA";
-  static EnvSpec fallback();
+  [[nodiscard]] static constexpr EnvSpec fallback() noexcept { return kDefaultDca; }
   static std::string levelText(float l)
   {
     if(l <= 0.f)
       return "-inf";
     char buf[16];
-    std::snprintf(buf, sizeof(buf), "%.0f dB", double((l - 1.f) * 78.27f));
+    std::snprintf(buf, sizeof(buf), "%.0f dB", double((l - 1.f) * kDcaRangeDb));
     return buf;
   }
 };
 struct DcwKind
 {
   static constexpr const char* title = "DCW";
-  static EnvSpec fallback();
+  [[nodiscard]] static constexpr EnvSpec fallback() noexcept { return kDefaultDcw; }
   static std::string levelText(float l)
   {
     char buf[16];
@@ -386,7 +397,7 @@ struct DcwKind
 struct DcoKind
 {
   static constexpr const char* title = "DCO";
-  static EnvSpec fallback();
+  [[nodiscard]] static constexpr EnvSpec fallback() noexcept { return kDefaultDco; }
   static std::string levelText(float l) { return DcwKind::levelText(l); }
 };
 }
