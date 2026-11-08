@@ -11,12 +11,13 @@
 
 #include <array>
 #include <cmath>
+#include <numbers>
 
 namespace czumarzu
 {
 namespace halfband
 {
-inline double ipow(double x, int n)
+[[nodiscard]] inline double ipow(double x, int n) noexcept
 {
   double r = 1.;
   while(n-- > 0)
@@ -26,9 +27,9 @@ inline double ipow(double x, int n)
 
 //! HIIR's PolyphaseIir2Designer::compute_coefs_spec_order_tbw
 template <std::size_t N>
-std::array<double, N> design(double transition)
+[[nodiscard]] std::array<double, N> design(double transition)
 {
-  constexpr double pi = 3.14159265358979323846;
+  constexpr double pi = std::numbers::pi;
   double k = std::tan((1. - transition * 2.) * pi / 4.);
   k *= k;
   const double kksqrt = std::pow(1. - k * k, 0.25);
@@ -103,8 +104,18 @@ public:
     y.fill(0.f);
   }
 
+  //! Where the FPU does not flush denormals: the allpasses' states, which
+  //! decay towards them in silence, to zero
+  void flushDenormals() noexcept
+  {
+    for(auto* v : {&x, &y})
+      for(auto& s : *v)
+        if(std::abs(s) < 1e-20f)
+          s = 0.f;
+  }
+
   //! One output sample from two input samples, in0 being the earlier
-  float process(float in0, float in1) noexcept
+  [[nodiscard]] float process(float in0, float in1) noexcept
   {
     float s0 = in1, s1 = in0;
     for(std::size_t i = 0; i < N; i += 2)
