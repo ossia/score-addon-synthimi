@@ -316,12 +316,16 @@ picks how it is kept down:
 
 | Quality | How | Latency | Aliasing (worst, note 96) | CPU, 16 voices |
 | --- | --- | --- | --- | --- |
-| Live | Second-order antiderivative antialiasing | none | -34 dB on the waves that jump | lowest |
-| Clean | The same, plus band-limited steps at each jump | 9 samples | -54 dB | 2.8 % |
-| Clean 2x | Clean, oversampled twice through a polyphase half-band | 9 samples, plus the half-band's | -72 dB | 4.9 % |
-| Clean 4x | Clean, oversampled four times | 9 samples, plus the half-bands' | -88 dB | 9 % |
+| Live | Second-order antiderivative antialiasing | none | -34 dB on the waves that jump | 2.1 % |
+| Clean | The same, plus band-limited steps at each jump | 9 samples | -54 dB | 2.0 % |
+| Clean 2x | Clean, oversampled twice through a polyphase half-band | 9 samples, plus the half-band's | -72 dB | 3.6 % |
+| Clean 4x | Clean, oversampled four times | 9 samples, plus the half-bands' | -88 dB | 6.8 % |
 
-Waves that do not jump are at -62 to -75 dB in Live and Clean already.
+Waves that do not jump are at -60 to -75 dB in Live and Clean already, VPS
+included at any Formant: its height is limited, as the pivot is, so that no
+segment's phase moves faster than the saw's. Ring modulation doubles the
+bandwidth: in Clean it runs at twice the rate. Each line's DC, which follows
+its envelopes, is removed in closed form before its level.
 
 ### CZumarzu presets
 
@@ -384,8 +388,9 @@ filter's cutoff or the level, with its shape, period, depth, delay and the
 phase each note starts it at. Two LFOs on X and Y a quarter of a cycle apart
 draw a circle (sine) or run around the diamond's edge (triangle).
 
-Then a four-pole ladder low-pass with its envelope, and the amplitude
-envelope. Spread places A and B to the left and C and D to the right, per
+Then a four-pole ladder low-pass with its envelope, run at twice the rate
+so that its saturation (**Drive**) aliases less, and self-oscillating at
+full resonance; and the amplitude envelope. Spread places A and B to the left and C and D to the right, per
 voice, so that a single note is as wide as a chord.
 
 ### ViceVersa presets

@@ -3,27 +3,68 @@
 //   score_addon_synthimi_make_presets <Presets folder>
 //
 // Each preset is set on the processor's own ports, so the port indices in the
-// .scp files come from the code and cannot drift from it. Every preset stores
-// every port: loading one sets only the ports it holds. Levels are matched by
-// measurement: middle C, velocity 100, its loudest 100 ms brought to -24 dBFS
-// RMS.
+// .scp files come from the code and cannot drift from it; each control is
+// also stored with its name, which the host matches first. Every preset
+// stores every port: loading one sets only the ports it holds. Levels are
+// matched by measurement: middle C, velocity 100, its loudest 100 ms brought
+// to -24 dBFS RMS. A synth's folder is written anew: presets no longer in the
+// list go. Exits non-zero if anything could not be written.
 #include <CZumarzu/CZumarzu.hpp>
 #include <ViceVersa/ViceVersa.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
 namespace
 {
+//! A JSON string's contents
+std::string escaped(std::string_view s)
+{
+  std::string out;
+  for(char c : s)
+  {
+    switch(c)
+    {
+      case '"':
+        out += "\\\"";
+        break;
+      case '\\':
+        out += "\\\\";
+        break;
+      default:
+        if(static_cast<unsigned char>(c) < 0x20)
+        {
+          char buf[8];
+          std::snprintf(buf, sizeof(buf), "\\u%04x", unsigned(static_cast<unsigned char>(c)));
+          out += buf;
+        }
+        else
+          out += c;
+    }
+  }
+  return out;
+}
+
+void putFloat(std::ostream& o, double v)
+{
+  if(!std::isfinite(v))
+    throw std::runtime_error("a control holds a value that is not finite");
+  o << v;
+}
+
 template <typename T>
 void put(std::ostream& o, const T& v)
 {
@@ -35,36 +76,67 @@ void put(std::ostream& o, const T& v)
   else if constexpr(std::is_integral_v<V>)
     o << "{\"Int\":" << v << "}";
   else if constexpr(std::is_floating_point_v<V>)
-    o << "{\"Float\":" << double(v) << "}";
+  {
+    o << "{\"Float\":";
+    putFloat(o, double(v));
+    o << "}";
+  }
   else if constexpr(requires { v.x; v.y; })
-    o << "{\"Vec2f\":[" << double(v.x) << "," << double(v.y) << "]}";
+  {
+    o << "{\"Vec2f\":[";
+    putFloat(o, double(v.x));
+    o << ",";
+    putFloat(o, double(v.y));
+    o << "]}";
+  }
   else if constexpr(std::is_same_v<V, std::vector<float>>)
   {
     o << "{\"Tuple\":[";
     for(std::size_t i = 0; i < v.size(); i++)
-      o << (i ? "," : "") << "{\"Float\":" << double(v[i]) << "}";
+    {
+      o << (i ? "," : "") << "{\"Float\":";
+      putFloat(o, double(v[i]));
+      o << "}";
+    }
     o << "]}";
   }
   else
     static_assert(sizeof(V) == 0, "port type without an encoding");
 }
 
+//! A port's value as the host stores it. A time chooser holds a pair: the
+//! time, and 0 for seconds (else the synced fraction); a plain number would
+//! be read as synced.
+template <typename Port>
+void putPort(std::ostream& o, const Port& port)
+{
+  if constexpr(requires { port.sync; })
+  {
+    if(port.sync)
+      throw std::runtime_error("synced times are not written by this tool");
+    o << "{\"Vec2f\":[";
+    putFloat(o, double(port.value));
+    o << ",0]}";
+  }
+  else
+    put(o, port.value);
+}
+
 template <typename Proc>
-std::string toJson(const char* uuid, const std::string& name, const std::string& category,
-                   Proc& proc)
+std::string toJson(const std::string& name, const std::string& category, Proc& proc)
 {
   std::ostringstream o;
-  o.precision(6);
-  o << "{\"Key\":{\"Uuid\":\"" << uuid << "\",\"Effect\":\"\"},\"Name\":\"" << name
-    << "\",\"Category\":\"" << category << "\",\"Preset\":[";
+  o.precision(std::numeric_limits<float>::max_digits10);
+  o << "{\"Key\":{\"Uuid\":\"" << escaped(Proc::uuid()) << "\",\"Effect\":\"\"},\"Name\":\""
+    << escaped(name) << "\",\"Category\":\"" << escaped(category) << "\",\"Preset\":[";
   int index = 0;
   bool first = true;
   avnd::input_introspection<Proc>::for_all(proc.inputs, [&](auto& port) {
     if constexpr(requires { port.value; })
     {
       o << (first ? "" : ",") << "[" << index << ",";
-      put(o, port.value);
-      o << "]";
+      putPort(o, port);
+      o << ",\"" << escaped(std::remove_cvref_t<decltype(port)>::name()) << "\"]";
       first = false;
     }
     index++;
@@ -73,21 +145,30 @@ std::string toJson(const char* uuid, const std::string& name, const std::string&
   return o.str();
 }
 
-//! Loudest 100 ms of a held middle C, RMS in dBFS: pads are matched by their
-//! sustain, plucks and percussion by their attack; one note, as mono presets
-//! play one anyway
+//! From silence: a change of rate resets everything (the same rate keeps
+//! the voices, as a host's buffer change must)
+template <typename Synth>
+void fresh(Synth& s)
+{
+  s.prepare(44100.);
+  s.prepare(48000.);
+}
+
+//! Loudest 100 ms of a held middle C over 8 s, RMS in dBFS: pads are
+//! matched by their sustain, also after a slow attack, plucks and percussion
+//! by their attack; one note, as mono presets play one anyway
 template <typename Proc>
 double measure(Proc& proc)
 {
   auto& s = proc.synth;
-  s.prepare(48000.);
+  fresh(s);
   const auto p = proc.params();
   const unsigned char m[3]{0x90, 60, 100};
   s.midi(m, 3, p);
   constexpr int window = 4800;
   std::vector<float> l(window), r(window);
   double best = 0.;
-  for(int w = 0; w < 30; w++)
+  for(int w = 0; w < 80; w++)
   {
     s.render(p, l.data(), r.data(), window);
     double e = 0.;
@@ -96,6 +177,8 @@ double measure(Proc& proc)
                   + double(r[std::size_t(k)]) * r[std::size_t(k)]);
     best = std::max(best, e / window);
   }
+  if(!std::isfinite(best))
+    throw std::runtime_error("the synth's output is not finite");
   return 10. * std::log10(std::max(best, 1e-12));
 }
 
@@ -105,7 +188,7 @@ template <typename Proc>
 std::string onsets(Proc& proc)
 {
   auto& s = proc.synth;
-  s.prepare(48000.);
+  fresh(s);
   const auto p = proc.params();
   const unsigned char m[3]{0x90, 60, 100};
   s.midi(m, 3, p);
@@ -133,20 +216,47 @@ std::string onsets(Proc& proc)
   return out;
 }
 
+//! A synth's folder, emptied of the presets an earlier run wrote
+std::filesystem::path presetFolder(const std::filesystem::path& root, const char* synth)
+{
+  const auto dir = root / synth;
+  std::filesystem::create_directories(dir);
+  for(const auto& f : std::filesystem::directory_iterator(dir))
+    if(f.path().extension() == ".scp")
+      std::filesystem::remove(f.path());
+  return dir;
+}
+
+constexpr double kTargetDb = -24.;
+constexpr float kMinLevel = 0.05f, kMaxLevel = 4.f; // the Level ports' range
+
 template <typename Proc, typename Level>
-void write(const std::filesystem::path& dir, const char* uuid, const std::string& name,
+void write(const std::filesystem::path& dir, const std::string& name,
            const std::string& category, Proc& proc, Level& level)
 {
-  // Twice: the limiter makes the first correction approximate
+  if(name.empty() || name.find_first_of("/\\:") != std::string::npos)
+    throw std::runtime_error("preset name not usable as a file name: " + name);
+  // Three passes: the limiter makes the first corrections approximate
   for(int pass = 0; pass < 3; pass++)
   {
     const double db = measure(proc);
-    level.value = float(std::clamp(level.value * std::pow(10., (-24. - db) / 20.), 0.05, 2.));
+    level.value = float(std::clamp(
+        double(level.value) * std::pow(10., (kTargetDb - db) / 20.), double(kMinLevel),
+        double(kMaxLevel)));
   }
-  std::filesystem::create_directories(dir);
-  std::ofstream(dir / (name + ".scp")) << toJson(uuid, name, category, proc);
+  const double db = measure(proc);
+  const auto path = dir / (name + ".scp");
+  std::ofstream f(path);
+  f << toJson(name, category, proc);
+  f.close();
+  if(!f)
+    throw std::runtime_error("could not write " + path.string());
   std::printf("%-24s %-10s level %.3f, %.1f dBFS\n", name.c_str(), category.c_str(),
-              double(level.value), measure(proc));
+              double(level.value), db);
+  // Out of the level's range: the preset itself must be revoiced
+  if(std::abs(db - kTargetDb) > 1.)
+    std::fprintf(stderr, "warning: %s is at %.1f dBFS, level %.2f\n", name.c_str(), db,
+                 double(level.value));
   if(category == "Rhythmic")
     std::printf("%-24s onsets (ms): %s\n", "", onsets(proc).c_str());
 }
@@ -162,8 +272,11 @@ float rate(double s)
   return float(std::log(s / czumarzu::kSlowest) / std::log(czumarzu::kFastest / czumarzu::kSlowest));
 }
 
+//! Steps as (seconds for a full-scale move, level)
 EnvSpec env(std::initializer_list<std::pair<double, float>> steps, int sustain, int end)
 {
+  if(steps.size() > std::size_t(czumarzu::kSteps))
+    throw std::invalid_argument("an envelope has eight steps at most");
   EnvSpec e;
   int i = 0;
   for(auto [t, l] : steps)
@@ -188,20 +301,22 @@ EnvSpec hits(
     std::initializer_list<std::pair<double, float>> pattern, float floor = 0.f,
     bool loop = false)
 {
+  if(pattern.size() > std::size_t(czumarzu::kSteps / 2))
+    throw std::invalid_argument("four hits at most: each takes two steps");
+  // A full-scale rise in 0.5 ms: each hit rises from the floor
+  constexpr double kRise = 0.0005;
   EnvSpec e;
   int i = 0;
-  float prev = floor;
   for(auto [period, level] : pattern)
   {
-    const double rise = 0.0005;
-    e.rate[std::size_t(i)] = rate(0.0005);
+    const double distance = std::abs(level - floor);
+    e.rate[std::size_t(i)] = rate(kRise);
     e.level[std::size_t(i)] = level;
     i++;
-    const double fall = std::max(0.001, period - std::abs(level - prev) * rise);
-    e.rate[std::size_t(i)] = rate(fall / std::max(1e-3f, std::abs(level - floor)));
+    const double fall = std::max(0.001, period - distance * kRise);
+    e.rate[std::size_t(i)] = rate(fall / std::max(1e-3, distance));
     e.level[std::size_t(i)] = floor;
     i++;
-    prev = floor;
   }
   for(int k = i; k < czumarzu::kSteps; k++)
     e.rate[std::size_t(k)] = 0.5f;
@@ -256,7 +371,7 @@ void setLine(czumarzu::CZumarzu& c, int n, const CazLine& l)
 
 void czumarzuPresets(const std::filesystem::path& root)
 {
-  const auto dir = root / "CZumarzu";
+  const auto dir = presetFolder(root, "CZumarzu");
   struct Preset
   {
     const char* name;
@@ -974,7 +1089,7 @@ void czumarzuPresets(const std::filesystem::path& root)
     setLine(*c, 1, CazLine{});
     setLine(*c, 2, CazLine{});
     p.set(*c);
-    write(dir, "5f0c2b7e-8d41-4a96-b3e5-1c7a9e24d860", p.name, p.category, *c,
+    write(dir, p.name, p.category, *c,
           c->inputs.level);
   }
 }
@@ -1028,7 +1143,7 @@ void vec(viceversa::ViceVersa& r, std::array<float, 5> x, std::array<float, 5> y
   in.vec_env.value = s.points();
   in.vec_loop.value = loop;
   in.loop_from.value = viceversa::LoopFrom(from);
-  in.loop_to.value = viceversa::LoopTo(to - 1);
+  in.loop_to.value = viceversa::loopToItem(to);
   in.move1.value = t[0];
   in.move2.value = t[1];
   in.move3.value = t[2];
@@ -1085,7 +1200,7 @@ void filter(viceversa::ViceVersa& r, float cutoff, float reso, float envAmt, flo
 
 void viceVersaPresets(const std::filesystem::path& root)
 {
-  const auto dir = root / "ViceVersa";
+  const auto dir = presetFolder(root, "ViceVersa");
   using L = viceversa::VecLoop;
   struct Preset
   {
@@ -1487,7 +1602,7 @@ void viceVersaPresets(const std::filesystem::path& root)
     auto r = std::make_unique<viceversa::ViceVersa>();
     r->inputs.vec_env.value = viceversa::VecEnvSpec::centred().points();
     p.set(*r);
-    write(dir, "a3d6e1f4-2b7c-4c58-9e10-6f8d2b4a7c93", p.name, p.category, *r,
+    write(dir, p.name, p.category, *r,
           r->inputs.level);
   }
 }
@@ -1500,7 +1615,15 @@ int main(int argc, char** argv)
     std::cerr << "usage: " << argv[0] << " <Presets folder>\n";
     return 1;
   }
-  const std::filesystem::path root = argv[1];
-  czumarzuPresets(root);
-  viceVersaPresets(root);
+  try
+  {
+    const std::filesystem::path root = argv[1];
+    czumarzuPresets(root);
+    viceVersaPresets(root);
+  }
+  catch(const std::exception& e)
+  {
+    std::cerr << argv[0] << ": " << e.what() << "\n";
+    return 1;
+  }
 }
