@@ -24,8 +24,11 @@
  */
 
 #include <CZumarzu/Dsp/Envelope.hpp>
-#include <CZumarzu/Dsp/Halfband.hpp>
 #include <CZumarzu/Dsp/PhaseMaps.hpp>
+#include <Dsp/Denormals.hpp>
+#include <Dsp/Halfband.hpp>
+#include <Dsp/Numeric.hpp>
+#include <Dsp/Output.hpp>
 
 #include <algorithm>
 #include <array>
@@ -35,15 +38,15 @@
 #include <limits>
 #include <numbers>
 
-#if (defined(__SSE__) || defined(_M_X64)) && !defined(__EMSCRIPTEN__)
-#include <xmmintrin.h>
-#define CZUMARZU_HAS_MXCSR 1
-#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
-#define CZUMARZU_HAS_FPCR 1
-#endif
-
 namespace czumarzu
 {
+using synthimi::finite;
+using synthimi::sane;
+using synthimi::saneEnum;
+using ScopedFlushDenormals = synthimi::ScopedFlushDenormals<>;
+using Decimator2x = synthimi::Decimator2x<float>;
+using Decimator4x = synthimi::Decimator4x<float>;
+
 inline constexpr int kLanes = 4;
 inline constexpr int kGroups = 4;
 inline constexpr int kMaxVoices = kLanes * kGroups;
@@ -117,24 +120,6 @@ inline constexpr int kModulationCount = 3;
 inline constexpr int kQualityCount = 4;
 inline constexpr int kPlayModeCount = 3;
 inline constexpr int kVibratoWaveCount = 5;
-
-//! By bit test: survives -ffinite-math-only
-[[nodiscard]] inline bool finite(float x) noexcept
-{
-  std::uint32_t u;
-  std::memcpy(&u, &x, sizeof(u));
-  return (u & 0x7f800000u) != 0x7f800000u;
-}
-[[nodiscard]] inline float sane(float x, float lo, float hi, float fallback) noexcept
-{
-  return finite(x) ? std::clamp(x, lo, hi) : fallback;
-}
-template <typename E>
-[[nodiscard]] E saneEnum(E e, int count) noexcept
-{
-  const int i = int(e);
-  return (i >= 0 && i < count) ? e : E{};
-}
 
 struct LineParams
 {
@@ -241,38 +226,6 @@ struct Params
     return line[mode == LineMode::Line1Doubled ? 0 : 1];
   }
 };
-
-/*! Denormals flushed to zero while rendering, where the FPU does it: x86's
- *  MXCSR (FTZ and DAZ), AArch64's FPCR (FZ). Elsewhere (WebAssembly, ...)
- *  kHardware is false, and the synth flushes its filters' states itself.
- */
-struct ScopedFlushDenormals
-{
-#if CZUMARZU_HAS_MXCSR
-  static constexpr bool kHardware = true;
-  unsigned int saved = _mm_getcsr();
-  ScopedFlushDenormals() noexcept { _mm_setcsr(saved | 0x8040); }
-  ~ScopedFlushDenormals() { _mm_setcsr(saved); }
-#elif CZUMARZU_HAS_FPCR
-  static constexpr bool kHardware = true;
-  std::uint64_t saved = fpcr();
-  ScopedFlushDenormals() noexcept { setFpcr(saved | (std::uint64_t(1) << 24)); }
-  ~ScopedFlushDenormals() { setFpcr(saved); }
-  static std::uint64_t fpcr() noexcept
-  {
-    std::uint64_t r;
-    __asm__ __volatile__("mrs %0, fpcr" : "=r"(r));
-    return r;
-  }
-  static void setFpcr(std::uint64_t r) noexcept { __asm__ __volatile__("msr fpcr, %0" : : "r"(r)); }
-#else
-  static constexpr bool kHardware = false;
-  ScopedFlushDenormals() noexcept = default;
-#endif
-  ScopedFlushDenormals(const ScopedFlushDenormals&) = delete;
-  ScopedFlushDenormals& operator=(const ScopedFlushDenormals&) = delete;
-};
-
 
 class Synth
 {
@@ -418,11 +371,8 @@ public:
     mode = -1;
     switchGain = 1.f;
     resetFilters();
-    // 10 Hz DC blocker; the limiter's 1 ms attack, 100 ms release; 5 ms
-    // fades around a change of internal rate
-    dcCoef = float(1. - 2. * std::numbers::pi * 10. / fs);
-    limAttack = float(1. - std::exp(-1. / (0.001 * fs)));
-    limRelease = float(1. - std::exp(-1. / (0.1 * fs)));
+    output.prepare(fs);
+    // 5 ms fades around a change of internal rate
     switchStep = float(1. / (0.005 * fs));
   }
 
@@ -542,27 +492,17 @@ public:
         sr *= switchGain;
 
         // DC: what the lines' own means leave, as the steps of a note
-        const float yl = sl - dcL + dcCoef * dcLy;
-        const float yr = sr - dcR + dcCoef * dcRy;
-        dcL = sl;
-        dcR = sr;
-        dcLy = yl;
-        dcRy = yr;
+        output.blockDc(sl, sr);
 
-        float ol = yl * p.level, or_ = yr * p.level;
+        float ol = sl * p.level, or_ = sr * p.level;
         if(!finite(ol) || !finite(or_))
         {
           panic();
           ol = or_ = 0.f;
         }
-        const float peak = std::max(std::abs(ol), std::abs(or_));
-        preLimiterPeak = std::max(preLimiterPeak, peak);
-        // Peak limiter: the reduction comes in over 1 ms and goes over
-        // 100 ms; what passes meanwhile is soft clipped
-        const float wanted = peak > kLimit ? kLimit / peak : 1.f;
-        limGain += (wanted - limGain) * (wanted < limGain ? limAttack : limRelease);
-        l[done + i] = softClip(ol * limGain);
-        r[done + i] = softClip(or_ * limGain);
+        preLimiterPeak = std::max(preLimiterPeak, output.limit(ol, or_));
+        l[done + i] = ol;
+        r[done + i] = or_;
       }
       done += n;
       tickLeft -= n;
@@ -587,7 +527,6 @@ public:
   float modWheel{0.f};
 
 private:
-  static constexpr float kLimit = 0.97f;
   static constexpr float kPerOsc = 0.25f; // one note of two lines peaks at 0.5
   static constexpr float kNoiseUp = 6.349604207872798f; // 2^(32/12)
   //! Increments are multiples of 2^-24 cycle: the phase, 31 bits, then has 24
@@ -600,15 +539,6 @@ private:
     return std::max(kIncQuantum, std::round(x * 16777216.f) * kIncQuantum);
   }
 
-  //! Continuous with a slope of 1 at 0.9, bounded by 1
-  [[nodiscard]] static float softClip(float x) noexcept
-  {
-    const float a = std::abs(x);
-    if(a <= 0.9f)
-      return x;
-    return std::copysign(std::min(1.f, 0.9f + 0.1f * std::tanh((a - 0.9f) * 10.f)), x);
-  }
-
   //! The filters and delays after the voices, at rest
   void resetFilters() noexcept
   {
@@ -617,13 +547,12 @@ private:
     for(auto& d : dec4)
       d.reset();
     eqL = eqR = {};
-    dcL = dcR = dcLy = dcRy = 0.f;
+    output.reset();
     for(auto& g : groups)
     {
       g.late = {};
       g.drain = 0;
     }
-    limGain = 1.f;
   }
 
   //! Without the FPU's help: the recursive states, which decay towards
@@ -634,9 +563,10 @@ private:
       d.flushDenormals();
     for(auto& d : dec4)
       d.flushDenormals();
-    for(float* x : {&eqL[0], &eqL[1], &eqR[0], &eqR[1], &dcL, &dcR, &dcLy, &dcRy})
+    for(float* x : {&eqL[0], &eqL[1], &eqR[0], &eqR[1]})
       if(std::abs(*x) < 1e-20f)
         *x = 0.f;
+    output.flushDenormals();
   }
 
   /*! What renders: the internal rate (oversampling) times 2, plus 1 for Live,
@@ -1593,11 +1523,7 @@ private:
   double lfoPhase{0.};
   float lfoValue{0.f};
   double glideCoef{1.};
-  float dcL{0.f}, dcR{0.f}, dcLy{0.f}, dcRy{0.f};
   std::array<float, 2> eqL{}, eqR{}; // the compensation's last input and output
-  float dcCoef{0.9987f};
-  float limGain{1.f};
-  float limAttack{0.02f};
-  float limRelease{0.0002f};
+  synthimi::OutputStage output;
 };
 }

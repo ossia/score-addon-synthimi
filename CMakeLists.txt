@@ -159,6 +159,8 @@ avnd_score_plugin_add(
     Cordito/Dsp/Modal.hpp
     Cordito/Dsp/Sympathetic.hpp
     Cordito/Dsp/Waveguide.hpp
+    Dsp/Denormals.hpp
+    Dsp/Numeric.hpp
   TARGET cordito
   MAIN_CLASS Cordito
   NAMESPACE crd
@@ -172,8 +174,11 @@ avnd_score_plugin_add(
     CZumarzu/CZumarzuDsp.hpp
     CZumarzu/EnvelopeWidget.hpp
     CZumarzu/Dsp/Envelope.hpp
-    CZumarzu/Dsp/Halfband.hpp
     CZumarzu/Dsp/PhaseMaps.hpp
+    Dsp/Denormals.hpp
+    Dsp/Halfband.hpp
+    Dsp/Numeric.hpp
+    Dsp/Output.hpp
   TARGET czumarzu
   MAIN_CLASS CZumarzu
   NAMESPACE czumarzu
@@ -188,13 +193,16 @@ avnd_score_plugin_add(
     ViceVersa/VectorWidget.hpp
     ViceVersa/Dsp/Banks.hpp
     ViceVersa/Dsp/Base.hpp
-    ViceVersa/Dsp/Halfband.hpp
     ViceVersa/Dsp/Ladder.hpp
     ViceVersa/Dsp/Modulation.hpp
     ViceVersa/Dsp/SampledBanks.hpp
     ViceVersa/Dsp/Simd.hpp
     ViceVersa/Dsp/Vector.hpp
     ViceVersa/Dsp/Wavetable.hpp
+    Dsp/Denormals.hpp
+    Dsp/Halfband.hpp
+    Dsp/Numeric.hpp
+    Dsp/Output.hpp
   TARGET viceversa
   MAIN_CLASS ViceVersa
   NAMESPACE viceversa
