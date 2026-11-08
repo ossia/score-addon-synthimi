@@ -1164,22 +1164,40 @@ TEST_CASE("The envelope graph edits the steps, the menus the rest", "[czumarzu][
 {
   using W = StepEnvelopeWidget<DcwKind>;
   W w;
-  int edits = 0;
+  int edits = 0, ends = 0, commits = 0;
   std::get<0>(w.transactions).update = [&](const std::vector<float>& v) {
     std::get<0>(w.values) = v;
     edits++;
   };
+  std::get<2>(w.transactions).update = [&](const int& end) {
+    std::get<2>(w.values) = end;
+    ends++;
+  };
+  std::get<0>(w.transactions).commit = [&] { commits++; };
   setPorts(w, EnvSpec::make({{0.9f, 1.f}, {0.5f, 0.4f}, {0.5f, 0.f}}, 1, 2));
   const double y = W::kPlotY + 10.;
   auto at = [&](int i) { return W::colX(i) + W::kCol * 0.5; };
 
-  // A column past the end is not used: nothing to grab there
-  CHECK_FALSE(w.mouse_press(ev(at(5), y)));
-  CHECK(w.spec.end == 2);
   // A click in a used column, without a move, changes nothing
   CHECK(w.mouse_press(ev(at(1), y)));
   w.mouse_release(ev(at(1), y));
   CHECK(edits == 0);
+  CHECK(ends == 0);
+
+  // A dimmed step, past the end: the end moves to it and its point drags,
+  // in one gesture
+  CHECK(w.mouse_press(ev(at(4), y)));
+  CHECK(w.spec.end == 4);
+  CHECK(std::get<2>(w.values) == 4);
+  w.mouse_move(ev(at(4), y - 10.));
+  CHECK(w.spec.end == 4);
+  w.mouse_release(ev(at(4), y - 10.));
+  CHECK(ends == 1);
+  CHECK(edits == 1);
+  CHECK(commits == 2);
+  w.sync();
+  CHECK(w.spec.end == 4);
+  edits = 0;
   // Sustain, end and loop come from their menus
   std::get<1>(w.values) = 0;
   std::get<2>(w.values) = 5;
