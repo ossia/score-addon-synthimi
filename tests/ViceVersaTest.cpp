@@ -770,6 +770,44 @@ TEST_CASE("The noise's colour is the same at any rate", "[viceversa][bank]")
   }
 }
 
+TEST_CASE("A bank changed under a note crossfades instead of clicking", "[viceversa][bank]")
+{
+  // Two smooth waves, a sine and the Organ's first registration (its 2nd and
+  // 4th harmonics): only a jump at the change would make a large step
+  const double fs = 48000.;
+  const std::size_t fade = std::size_t(0.005 * fs);
+  auto maxStep = [](const std::vector<float>& x, std::size_t from, std::size_t to) {
+    double m = 0.;
+    for(std::size_t i = std::max<std::size_t>(from, 1); i < to; i++)
+      m = std::max(m, std::abs(double(x[i]) - x[i - 1]));
+    return m;
+  };
+  for(auto [a, b] : {std::pair{BankId::SineSaw, BankId::Organ},
+                     std::pair{BankId::Organ, BankId::SineSaw}})
+  {
+    // The change at as many places in the waves' cycles
+    for(int k = 0; k < 8; k++)
+    {
+      Rig rig(fs);
+      auto p = plain(a, 0.f);
+      rig.on(48, 127, p);
+      auto x = rig.run((14400.5 + 37. * k) / fs, p);
+      const std::size_t at = x.size();
+      p.src[0].bank = b;
+      const auto y = rig.run(0.2, p);
+      x.insert(x.end(), y.begin(), y.end());
+      const double before = maxStep(x, at - 4800, at);
+      const double after = maxStep(x, at + 2 * fade, at + 2 * fade + 4800);
+      const double across = maxStep(x, at, at + 2 * fade);
+      INFO("bank " << int(a) << " to " << int(b) << " after " << at << " samples: steps "
+                   << before << " before, " << across << " across, " << after << " after");
+      CHECK(before > 0.001);
+      CHECK(after > 0.001);
+      CHECK(across < 1.25 * std::max(before, after));
+    }
+  }
+}
+
 TEST_CASE("The sampled banks keep their recorded spectra", "[viceversa][bank]")
 {
   // Frame by frame, the table's harmonics are the stored magnitudes, scaled
