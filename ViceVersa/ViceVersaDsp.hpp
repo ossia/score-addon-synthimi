@@ -330,6 +330,11 @@ public:
     Upsampler2x<vec4> upL{}, upR{};
     Ladder ladderL{}, ladderR{};
     Decimator2x<vec4> downL{}, downR{};
+    //! The bank a source fades out of (Synth::fromBank): its tables for
+    //! this period, and the frame positions it was left at, in its frames
+    std::array<Bank::Lanes, kSources> fromLanes{};
+    std::array<std::array<float, kLanes>, kSources> fromFrame{};
+    std::array<bool, kSources> fromHeard{};
     bool active{false};
   };
 
@@ -363,6 +368,8 @@ public:
     modWheel = 0.f;
     output.prepare(fs);
     noiseExp = float(kNoiseRate / fs);
+    fromBank = {};
+    bankFadeStep = float(1. / (kBankFade * fs));
     incBase = float(std::log2(440. / fs));
     mipBase = float(std::log2(440. * kTopHarmonic / (double(kSafeCycles) * fs)));
   }
@@ -501,6 +508,13 @@ public:
       for(auto& g : groups)
         if(g.active)
           renderGroup(g, n);
+      for(std::size_t s = 0; s < kSources; s++)
+        if(fromBank[s])
+        {
+          fromGain[s] -= float(n) * bankFadeStep;
+          if(fromGain[s] <= 0.f)
+            fromBank[s] = nullptr;
+        }
 
       for(int i = 0; i < n; i++)
       {
@@ -536,6 +550,9 @@ private:
   static constexpr float kPerVoice = 0.35f;
   //! The rate the noise bank's colours are set for
   static constexpr double kNoiseRate = 48000.;
+  //! A source's bank changed: the old one fades out while the new one fades
+  //! in, over this
+  static constexpr double kBankFade = 0.005;
 
   struct ChannelState
   {
@@ -557,8 +574,37 @@ private:
       monoStack.clear();
     }
     const auto& banks = builtinBanks();
-    for(int s = 0; s < kSources; s++)
-      bank[std::size_t(s)] = &banks[std::size_t(p.src[std::size_t(s)].bank)];
+    for(std::size_t s = 0; s < kSources; s++)
+    {
+      const Bank* want = &banks[std::size_t(p.src[s].bank)];
+      // During a fade, the next change waits for its end
+      if(want == bank[s] || fromBank[s])
+        continue;
+      if(bank[s])
+        startBankFade(s, want);
+      bank[s] = want;
+    }
+  }
+
+  //! Source s from its bank to `to`, crossfaded: the old bank is read where
+  //! the frame positions were, and the frame ramps go on in the new bank's
+  //! frames, from the same place along it
+  void startBankFade(std::size_t s, const Bank* to) noexcept
+  {
+    fromBank[s] = bank[s];
+    fromGain[s] = 1.f;
+    const int was = bank[s]->frames() - 1, now = to->frames() - 1;
+    const float scale = was > 0 ? float(std::max(now, 0)) / float(was) : 0.f;
+    for(auto& g : groups)
+    {
+      auto& f = g.frame[s];
+      g.fromFrame[s] = f.value;
+      for(std::size_t l = 0; l < kLanes; l++)
+      {
+        f.value[l] *= scale;
+        f.step[l] *= scale;
+      }
+    }
   }
 
   static void flushGroup(Group& g) noexcept
@@ -1040,7 +1086,7 @@ private:
           = std::clamp(sp.frame + p.frameEnv * fenv + mod.frameOf[si], 0.f, 1.f);
       g.frame[si].toward(l, pos * float(std::max(0, b ? b->frames() - 1 : 0)), n, jump);
       g.weight[si].toward(l, wt[s] * sp.level, n, false);
-      if(b && b->noise())
+      if((b && b->noise()) || (fromBank[si] && fromBank[si]->noise()))
       {
         // White noise, a one-pole darkening it as the frame position rises,
         // its power kept. The pole is 0.995 * position at kNoiseRate; at
@@ -1073,6 +1119,32 @@ private:
   }
 
   // ---- audio rate ------------------------------------------------------
+  //! Source si's next sample in each lane, from bank b
+  KFR_ALWAYS_INLINE vec4 source(
+      Group& g, std::size_t si, const Bank& b, const Bank::Lanes& lanes, vec4 frame,
+      vec4 phase) noexcept
+  {
+    if(!b.noise())
+      return Bank::read(lanes, frame, phase);
+    alignas(16) std::array<float, kLanes> out;
+    const auto& a = g.noisePole[si].value;
+    for(std::size_t l = 0; l < kLanes; l++)
+    {
+      auto& x = g.noise[si][l];
+      x ^= x << 13;
+      x ^= x >> 17;
+      x ^= x << 5;
+      const float white = float(std::int32_t(x)) * (1.f / 2147483648.f);
+      auto& lp = g.noiseLp[si][l];
+      lp = (1.f - a[l]) * white + a[l] * lp;
+      out[l] = lp;
+    }
+    const vec4 o = kfr::read<kLanes, true>(out.data()) * g.noiseGain[si].get();
+    g.noisePole[si].advance();
+    g.noiseGain[si].advance();
+    return o;
+  }
+
   void renderGroup(Group& g, int n) noexcept
   {
     // A source's table is read only if a voice of the group can hear it
@@ -1088,6 +1160,10 @@ private:
       g.heard[si] = heard && bank[si] && !bank[si]->empty();
       if(g.heard[si] && !bank[si]->noise())
         bank[si]->lanes(g.lanes[si], g.mip[si]);
+      const Bank* from = fromBank[si];
+      g.fromHeard[si] = heard && from && !from->empty();
+      if(g.fromHeard[si] && !from->noise())
+        from->lanes(g.fromLanes[si], g.mip[si]);
     }
 
     vec4 phase[kSources], inc[kSources];
@@ -1104,30 +1180,19 @@ private:
       for(int s = 0; s < kSources; s++)
       {
         const auto si = std::size_t(s);
-        if(g.heard[si])
+        if(g.heard[si] || g.fromHeard[si])
         {
-          vec4 o;
-          if(bank[si]->noise())
+          vec4 o = g.heard[si]
+                       ? source(g, si, *bank[si], g.lanes[si], g.frame[si].get(), phase[si])
+                       : vec4(0.f);
+          if(g.fromHeard[si])
           {
-            alignas(16) std::array<float, kLanes> out;
-            const auto& a = g.noisePole[si].value;
-            for(std::size_t l = 0; l < kLanes; l++)
-            {
-              auto& x = g.noise[si][l];
-              x ^= x << 13;
-              x ^= x >> 17;
-              x ^= x << 5;
-              const float white = float(std::int32_t(x)) * (1.f / 2147483648.f);
-              auto& lp = g.noiseLp[si][l];
-              lp = (1.f - a[l]) * white + a[l] * lp;
-              out[l] = lp;
-            }
-            o = kfr::read<kLanes, true>(out.data()) * g.noiseGain[si].get();
-            g.noisePole[si].advance();
-            g.noiseGain[si].advance();
+            const vec4 old = source(
+                g, si, *fromBank[si], g.fromLanes[si],
+                kfr::read<kLanes>(g.fromFrame[si].data()), phase[si]);
+            const float f = std::max(0.f, fromGain[si] - float(i) * bankFadeStep);
+            o += (old - o) * vec4(f);
           }
-          else
-            o = Bank::read(g.lanes[si], g.frame[si].get(), phase[si]);
           o *= g.weight[si].get();
           mixL += o * vec4(panL[si]);
           mixR += o * vec4(panR[si]);
@@ -1167,6 +1232,10 @@ private:
   bool prepared{false};
   PlayMode play{PlayMode::Poly};
   std::array<const Bank*, kSources> bank{};
+  //! The bank each source fades out of, or null, and its gain, 1 to 0
+  std::array<const Bank*, kSources> fromBank{};
+  std::array<float, kSources> fromGain{};
+  float bankFadeStep{1.f / 240.f};
   std::array<ChannelState, 16> channels{};
   std::array<float, kCtrl> bufL{}, bufR{};
   std::array<float, kSources> panL{}, panR{};
