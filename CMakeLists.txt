@@ -380,7 +380,8 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
 
   # Writes CZumarzu's and ViceVersa's presets for the default package:
   #   score_addon_synthimi_make_presets <package>/Presets
-  add_executable(score_addon_synthimi_make_presets tools/SynthimiPresets.cpp)
+  add_executable(score_addon_synthimi_make_presets
+    tools/SynthimiPresets.cpp tools/SynthimiPresets.hpp)
   target_include_directories(score_addon_synthimi_make_presets PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${OSSIA_3RDPARTY_FOLDER}/kfr/include")
@@ -388,6 +389,19 @@ if(SCORE_TESTING AND TARGET Catch2::Catch2WithMain AND NOT SCORE_FAST_DEV_BUILD)
   if(NOT MSVC)
     target_compile_options(score_addon_synthimi_make_presets PRIVATE -O2)
   endif()
+
+  # The presets the tool writes: loaded back by name onto the right ports,
+  # each at -24 dBFS
+  add_executable(score_addon_synthimi_presets_test tests/SynthimiPresetsTest.cpp)
+  target_include_directories(score_addon_synthimi_presets_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${OSSIA_3RDPARTY_FOLDER}/kfr/include")
+  target_link_libraries(score_addon_synthimi_presets_test PRIVATE
+    Catch2::Catch2WithMain score_plugin_avnd)
+  if(NOT MSVC)
+    target_compile_options(score_addon_synthimi_presets_test PRIVATE -O2)
+  endif()
+  add_test(NAME score_addon_synthimi_presets_test COMMAND score_addon_synthimi_presets_test)
 
   # Same compiler requirement as the kaboom object itself
   if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
