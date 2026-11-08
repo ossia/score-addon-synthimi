@@ -164,6 +164,59 @@ std::vector<float> tail(const std::vector<float>& x, std::size_t from)
 }
 
 // =========================================================================
+TEST_CASE("Nothing allocates after prepare, from the first note", "[viceversa][robustness]")
+{
+  // First in the file, and on its own: nothing earlier has played
+  auto synth = std::make_unique<Synth>();
+  std::vector<float> l(256), r(256);
+  Params p;
+  p.lfos[0].target = ModTarget::X;
+  p.lfos[1].target = ModTarget::Cutoff;
+  p.lfos[1].shape = LfoShape::Random;
+  p.drive = 0.8f;
+  p.sanitize();
+
+  synth->prepare(48000.);
+  g_allocs = 0;
+  g_watch = true;
+  const unsigned char on[3]{0x90, 60, 100}, on2[3]{0x91, 67, 90};
+  const unsigned char off[3]{0x80, 60, 0}, off2[3]{0x81, 67, 0};
+  synth->midi(on, 3, p);
+  synth->midi(on2, 3, p);
+  for(int b = 0; b < 50; b++)
+    synth->render(p, l.data(), r.data(), 256);
+  // Every bank, each crossfaded from the one before, the noise among them
+  for(int bank = 0; bank < kBankCount; bank++)
+  {
+    for(auto& s : p.src)
+      s.bank = BankId(bank);
+    for(int b = 0; b < 4; b++)
+      synth->render(p, l.data(), r.data(), 256);
+  }
+  // Every LFO target, every play mode with its notes, the same rate again
+  for(int t = 0; t < kModTargetCount; t++)
+  {
+    p.lfos[2].target = ModTarget(t);
+    for(int b = 0; b < 2; b++)
+      synth->render(p, l.data(), r.data(), 256);
+  }
+  for(int m = 0; m < kPlayModeCount; m++)
+  {
+    p.play = PlayMode(m);
+    synth->midi(off, 3, p);
+    synth->midi(on, 3, p);
+    for(int b = 0; b < 10; b++)
+      synth->render(p, l.data(), r.data(), 256);
+  }
+  synth->prepare(48000.);
+  synth->midi(off, 3, p);
+  synth->midi(off2, 3, p);
+  for(int b = 0; b < 20; b++)
+    synth->render(p, l.data(), r.data(), 256);
+  g_watch = false;
+  CHECK(g_allocs == 0);
+}
+
 TEST_CASE("The mixing law is the Prophet VS's", "[viceversa][mix]")
 {
   auto check = [](Weights w, float a, float b, float c, float d) {
