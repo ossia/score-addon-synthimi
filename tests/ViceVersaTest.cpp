@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -20,6 +21,8 @@
 #include <numbers>
 #include <random>
 #include <vector>
+
+#include <ossia/math/safe_math.hpp>
 
 namespace
 {
@@ -492,7 +495,7 @@ TEST_CASE("The ladder filters at 24 dB per octave and stays bounded", "[vicevers
       prev = y;
     }
     hz = crossings / 2.;
-    CHECK(std::isfinite(peak));
+    CHECK(ossia::safe_isfinite(peak));
     CHECK(peak < 2.f);
     return std::sqrt(e / 48000.);
   };
@@ -617,8 +620,8 @@ TEST_CASE("ViceVersa's voices end, and any input is safe", "[viceversa][robustne
       rig.s->render(p, l.data(), r.data(), n);
       for(int i = 0; i < n; i++)
       {
-        REQUIRE(std::isfinite(l[std::size_t(i)]));
-        REQUIRE(std::isfinite(r[std::size_t(i)]));
+        REQUIRE(ossia::safe_isfinite(l[std::size_t(i)]));
+        REQUIRE(ossia::safe_isfinite(r[std::size_t(i)]));
         REQUIRE(std::abs(l[std::size_t(i)]) <= 1.f);
         REQUIRE(std::abs(r[std::size_t(i)]) <= 1.f);
       }
@@ -736,7 +739,7 @@ TEST_CASE("Every bank sounds, at its level, and the noise darkens", "[viceversa]
       double e = 0.;
       for(float v : x)
       {
-        REQUIRE(std::isfinite(v));
+        REQUIRE(ossia::safe_isfinite(v));
         e += double(v) * v;
       }
       const double db = 10. * std::log10(e / double(x.size()));

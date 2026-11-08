@@ -5,8 +5,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <vector>
+
+#include <ossia/math/safe_math.hpp>
 
 namespace
 {
@@ -41,8 +44,8 @@ struct Rig
       peak = 0.f;
       for(int i = 0; i < frames; i++)
       {
-        REQUIRE(std::isfinite(l[i]));
-        REQUIRE(std::isfinite(r[i]));
+        REQUIRE(ossia::safe_isfinite(l[i]));
+        REQUIRE(ossia::safe_isfinite(r[i]));
         peak = std::max({peak, std::abs(l[i]), std::abs(r[i])});
       }
     }

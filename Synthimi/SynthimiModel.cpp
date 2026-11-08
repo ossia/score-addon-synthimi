@@ -5,7 +5,11 @@
 #include <kfr/dsp/oscillators.hpp>
 #include <libremidi/message.hpp>
 
+#include <cstdint>
 #include <numbers>
+
+#include <ossia/math/safe_math.hpp>
+
 // This is a bit slow to build and I want to go fast tonight... so maybe...
 
 // #include <ossia/network/dataspace/gain.hpp>
@@ -24,8 +28,8 @@ struct nan_detector
   nan_detector(double v) { *this = v; }
   void check(double v)
   {
-    SCORE_ASSERT(!std::isnan(v));
-    SCORE_ASSERT(!std::isinf(v));
+    SCORE_ASSERT(!ossia::safe_isnan(v));
+    SCORE_ASSERT(!ossia::safe_isinf(v));
   }
   operator double()
   {

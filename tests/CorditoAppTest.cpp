@@ -30,9 +30,12 @@
 #include <score_test/Project.hpp>
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string_view>
 #include <vector>
+
+#include <ossia/math/safe_math.hpp>
 
 namespace
 {
@@ -205,7 +208,7 @@ TEST_CASE("Cordito: every preset loads and plays", "[synthimi][cordito]")
         {
           INFO(c->name().toStdString());
           const double v = number(c->value());
-          CHECK(std::isfinite(v));
+          CHECK(ossia::safe_isfinite(v));
           CHECK(v >= double(c->domain().get().convert_min<float>()) - 1e-4);
           CHECK(v <= double(c->domain().get().convert_max<float>()) + 1e-4);
         }
@@ -224,7 +227,7 @@ TEST_CASE("Cordito: every preset loads and plays", "[synthimi][cordito]")
         synth->render(p, l.data(), r.data(), int(l.size()));
         for(std::size_t i = 0; i < l.size(); i++)
         {
-          finite &= std::isfinite(l[i]) && std::isfinite(r[i]);
+          finite &= ossia::safe_isfinite(l[i]) && ossia::safe_isfinite(r[i]);
           energy += l[i] * l[i] + r[i] * r[i];
         }
         const unsigned char off[3]{0x80, (unsigned char)note, 0};
