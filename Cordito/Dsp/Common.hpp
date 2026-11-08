@@ -5,24 +5,27 @@
 // Cordito: constants, the enumerations of the ports, the parameters as the DSP
 // sees them, and small helpers.
 
+#include <Dsp/Denormals.hpp>
+#include <Dsp/Numeric.hpp>
+
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
-// The SSE control register; Emscripten emulates SSE on WebAssembly SIMD,
-// which has none
-#if (defined(__SSE__) || defined(_M_X64) || defined(_M_AMD64)) && !defined(__EMSCRIPTEN__)
-#include <xmmintrin.h>
-#define CORDITO_HAS_SSE 1
-#endif
-
 namespace crd
 {
+using synthimi::finite;
+using synthimi::sane;
+using synthimi::saneEnum;
+//! Flush-to-zero for the scope of a render, restored after, on x86 only: on
+//! AArch64 the FPCR stays as the host set it, and Synth::control snaps the
+//! filters that only decay to 0, as wherever nothing flushes them
+using ScopedFlushDenormals = synthimi::ScopedFlushDenormals<false>;
+
 inline constexpr double kPi = 3.14159265358979323846;
 inline constexpr double kTwoPi = 2. * kPi;
 //! ln(1000): a T60 is the time for the amplitude to fall by 1000
@@ -188,29 +191,6 @@ struct LfoParams
   return Exciter::Pick;
 }
 
-//! std::isfinite on the bits: -ffinite-math-only (in -Ofast) lets the
-//! compiler fold std::isfinite to true
-[[nodiscard]] inline bool finite(double x) noexcept
-{
-  constexpr std::uint64_t exponent = 0x7FF0000000000000ull;
-  return (std::bit_cast<std::uint64_t>(x) & exponent) != exponent;
-}
-
-//! A finite value clamped to [lo, hi]; `fallback` for NaN and infinities
-[[nodiscard]] inline double sane(double x, double lo, double hi, double fallback) noexcept
-{
-  if(!finite(x))
-    return fallback;
-  return std::clamp(x, lo, hi);
-}
-
-template <typename E>
-E saneEnum(E e, int count) noexcept
-{
-  const int i = static_cast<int>(e);
-  return (i >= 0 && i < count) ? e : E{};
-}
-
 //! Every control of the synth, in physical units, clamped by sanitize()
 struct Params
 {
@@ -352,14 +332,4 @@ struct Rng
 {
   return 440. * std::exp2((note - 69.) / 12.);
 }
-
-//! Flush-to-zero for the scope of a render, restored after
-struct ScopedFlushDenormals
-{
-#if defined(CORDITO_HAS_SSE)
-  unsigned int saved = _mm_getcsr();
-  ScopedFlushDenormals() noexcept { _mm_setcsr(saved | 0x8040); }
-  ~ScopedFlushDenormals() { _mm_setcsr(saved); }
-#endif
-};
 }

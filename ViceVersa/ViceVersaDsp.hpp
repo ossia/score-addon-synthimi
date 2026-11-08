@@ -24,12 +24,14 @@
 
 #include <ViceVersa/Dsp/Banks.hpp>
 #include <ViceVersa/Dsp/Base.hpp>
-#include <ViceVersa/Dsp/Halfband.hpp>
 #include <ViceVersa/Dsp/Ladder.hpp>
 #include <ViceVersa/Dsp/Modulation.hpp>
 #include <ViceVersa/Dsp/Simd.hpp>
 #include <ViceVersa/Dsp/Vector.hpp>
 #include <ViceVersa/Dsp/Wavetable.hpp>
+#include <Dsp/Denormals.hpp>
+#include <Dsp/Halfband.hpp>
+#include <Dsp/Output.hpp>
 
 #include <algorithm>
 #include <array>
@@ -37,15 +39,13 @@
 #include <cstdint>
 #include <numbers>
 
-#if (defined(__SSE__) || defined(_M_X64)) && !defined(__EMSCRIPTEN__)
-#include <xmmintrin.h>
-#define VICEVERSA_HAS_MXCSR 1
-#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
-#define VICEVERSA_HAS_FPCR 1
-#endif
-
 namespace viceversa
 {
+using synthimi::Decimator2x;
+using synthimi::softClip;
+using synthimi::Upsampler2x;
+using ScopedFlushDenormals = synthimi::ScopedFlushDenormals<>;
+
 inline constexpr int kGroups = 4;
 inline constexpr int kMaxVoices = kLanes * kGroups;
 inline constexpr int kCtrl = 16;
@@ -247,36 +247,6 @@ struct Adsr
   }
 };
 
-//! Denormals flushed to zero while it lives, where the FPU can
-struct ScopedFlushDenormals
-{
-#if VICEVERSA_HAS_MXCSR
-  unsigned int saved = _mm_getcsr();
-  ScopedFlushDenormals() noexcept { _mm_setcsr(saved | 0x8040); } // FTZ, DAZ
-  ~ScopedFlushDenormals() { _mm_setcsr(saved); }
-#elif VICEVERSA_HAS_FPCR
-  std::uint64_t saved = get();
-  static std::uint64_t get() noexcept
-  {
-    std::uint64_t r;
-    __asm__ __volatile__("mrs %0, fpcr" : "=r"(r));
-    return r;
-  }
-  static void set(std::uint64_t r) noexcept { __asm__ __volatile__("msr fpcr, %0" : : "r"(r)); }
-  ScopedFlushDenormals() noexcept { set(saved | (std::uint64_t(1) << 24)); } // FZ
-  ~ScopedFlushDenormals() { set(saved); }
-#endif
-};
-
-//! Above 0.9, eases into 1 instead of reaching it
-[[nodiscard]] inline float softClip(float x) noexcept
-{
-  const float a = std::abs(x);
-  if(a <= 0.9f)
-    return x;
-  return std::copysign(0.9f + 0.1f * std::tanh((a - 0.9f) * 10.f), x);
-}
-
 class Synth
 {
 public:
@@ -391,11 +361,7 @@ public:
     monoStack.clear();
     tickLeft = 0;
     modWheel = 0.f;
-    dcL = dcR = dcLy = dcRy = 0.f;
-    dcCoef = float(1. - 2. * std::numbers::pi * 10. / fs);
-    limGain = 1.f;
-    limAttack = float(1. - std::exp(-1. / (0.001 * fs)));
-    limRelease = float(1. - std::exp(-1. / (0.1 * fs)));
+    output.prepare(fs);
     incBase = float(std::log2(440. / fs));
     mipBase = float(std::log2(440. * kTopHarmonic / (double(kSafeCycles) * fs)));
   }
@@ -517,8 +483,8 @@ public:
     drive = 0.05f + 3.95f * p.drive * p.drive;
     for(auto& g : groups)
       flushGroup(g);
-    flushTiny(dcLy);
-    flushTiny(dcRy);
+    flushTiny(output.dcLy);
+    flushTiny(output.dcRy);
 
     int done = 0;
     while(done < frames)
@@ -537,26 +503,17 @@ public:
 
       for(int i = 0; i < n; i++)
       {
-        const float sl = bufL[std::size_t(i)], sr = bufR[std::size_t(i)];
-        const float yl = sl - dcL + dcCoef * dcLy;
-        const float yr = sr - dcR + dcCoef * dcRy;
-        dcL = sl;
-        dcR = sr;
-        dcLy = yl;
-        dcRy = yr;
-        float ol = yl * p.level, or_ = yr * p.level;
+        float sl = bufL[std::size_t(i)], sr = bufR[std::size_t(i)];
+        output.blockDc(sl, sr);
+        float ol = sl * p.level, or_ = sr * p.level;
         if(!finite(ol) || !finite(or_))
         {
           panic();
           ol = or_ = 0.f;
         }
-        // The limiter: its gain to what keeps the peak at kLimit, in 1 ms
-        // down, 100 ms up; what gets through is eased under 1
-        const float peak = std::max(std::abs(ol), std::abs(or_));
-        const float want = peak > kLimit ? kLimit / peak : 1.f;
-        limGain += (want - limGain) * (want < limGain ? limAttack : limRelease);
-        l[done + i] = softClip(ol * limGain);
-        r[done + i] = softClip(or_ * limGain);
+        output.limit(ol, or_);
+        l[done + i] = ol;
+        r[done + i] = or_;
       }
       done += n;
       tickLeft -= n;
@@ -567,8 +524,7 @@ public:
   {
     for(int i = 0; i < kMaxVoices; i++)
       resetVoice(i);
-    dcL = dcR = dcLy = dcRy = 0.f;
-    limGain = 1.f;
+    output.reset();
     monoStack.clear();
   }
 
@@ -576,7 +532,6 @@ public:
   std::array<Group, kGroups> groups{};
 
 private:
-  static constexpr float kLimit = 0.97f;
   static constexpr float kPerVoice = 0.35f;
 
   struct ChannelState
@@ -1212,9 +1167,6 @@ private:
   float modWheel{0.f};
   float drive{1.f};
   float incBase{0.f}, mipBase{0.f}; // log2 of A4's increment, and its octaves over level 0
-  float dcL{0.f}, dcR{0.f}, dcLy{0.f}, dcRy{0.f};
-  float dcCoef{0.9987f};
-  float limGain{1.f};
-  float limAttack{0.02f}, limRelease{0.0002f};
+  synthimi::OutputStage output;
 };
 }

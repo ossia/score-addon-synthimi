@@ -12,13 +12,15 @@
 
 #include <array>
 #include <cmath>
+#include <concepts>
+#include <cstddef>
 #include <numbers>
 
-namespace viceversa
+namespace synthimi
 {
 namespace halfband
 {
-inline double ipow(double x, int n) noexcept
+[[nodiscard]] inline double ipow(double x, int n) noexcept
 {
   double r = 1.;
   while(n-- > 0)
@@ -103,6 +105,17 @@ struct Chains
     y.fill(T(0.f));
   }
 
+  //! Where the FPU does not flush denormals: the allpasses' states, which
+  //! decay towards them in silence, to zero
+  void flushDenormals() noexcept
+    requires std::floating_point<T>
+  {
+    for(auto* v : {&x, &y})
+      for(auto& s : *v)
+        if(std::abs(s) < T(1e-20f))
+          s = T(0.f);
+  }
+
   void process(T& s0, T& s1) noexcept
   {
     for(std::size_t i = 0; i < N; i += 2)
@@ -119,6 +132,29 @@ struct Chains
         s1 = t1;
       }
     }
+  }
+};
+
+//! One output sample from two input samples, N coefficients
+template <typename T, std::size_t N>
+struct Decimator
+{
+  static constexpr std::size_t kCoefs = N;
+  Chains<T, N> chains;
+
+  void prepare(double transition) noexcept { chains.prepare(transition); }
+  void reset() noexcept { chains.reset(); }
+  void flushDenormals() noexcept
+    requires std::floating_point<T>
+  {
+    chains.flushDenormals();
+  }
+  //! in0 is the earlier
+  [[nodiscard]] T process(T in0, T in1) noexcept
+  {
+    T s0 = in1, s1 = in0;
+    chains.process(s0, s1);
+    return T(0.5f) * (s0 + s1);
   }
 };
 }
@@ -145,24 +181,25 @@ struct Upsampler2x
   }
 };
 
-/*! One output sample from two input samples: ten coefficients with a
- *  transition of 0.04, so the passband reaches 0.23 of the input rate (0.46
- *  of the output's), the stopband starts at 0.27, more than 120 dB down.
+/*! To the output rate: ten coefficients with a transition of 0.04, so the
+ *  passband reaches 0.23 of the input rate (0.46 of the output's, 22 kHz at
+ *  48 kHz), the stopband starts at 0.27, more than 100 dB down.
  */
 template <typename T>
-struct Decimator2x
+struct Decimator2x : halfband::Decimator<T, 10>
 {
   static constexpr double kTransition = 0.04;
-  halfband::Chains<T, 10> chains;
+  void prepare() noexcept { halfband::Decimator<T, 10>::prepare(kTransition); }
+};
 
-  void prepare() noexcept { chains.prepare(kTransition); }
-  void reset() noexcept { chains.reset(); }
-  //! in0 is the earlier
-  T process(T in0, T in1) noexcept
-  {
-    T s0 = in1, s1 = in0;
-    chains.process(s0, s1);
-    return T(0.5f) * (s0 + s1);
-  }
+/*! The first stage of 4x, to twice the output rate: it only has to keep what
+ *  will fold into the output's band, below 0.1125 of its input rate, so its
+ *  transition can be wide (0.125 to 0.375): four coefficients, 117 dB down.
+ */
+template <typename T>
+struct Decimator4x : halfband::Decimator<T, 4>
+{
+  static constexpr double kTransition = 0.25;
+  void prepare() noexcept { halfband::Decimator<T, 4>::prepare(kTransition); }
 };
 }
