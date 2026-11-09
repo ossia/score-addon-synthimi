@@ -327,10 +327,10 @@ TEST_CASE("Every waveform is the chip's transfer function", "[czumarzu][chip]")
         const double ref = double(chip.update(1)) / (0.5 * std::pow(8192., 508. / 511.));
         const float x = float(pos) / 2048.f;
         // Away from the jumps, where one step of the chip's phase is a leap
-        const float near = 3.f / 2048.f;
+        const float margin = 3.f / 2048.f;
         bool skip = false;
         for(float b : {lane0(s.br[0]), lane0(s.br[1]), lane0(s.br[2]), 1.f, 0.f})
-          skip |= std::abs(x - b) < near;
+          skip |= std::abs(x - b) < margin;
         if(skip)
           continue;
         worst = std::max(worst, std::abs(double(lane0(evaluate(s, vec4(x)))) - ref));

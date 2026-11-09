@@ -98,8 +98,8 @@ inline void sincos2pi(vec4 t, vec4& s, vec4& c) noexcept
   const vec4 u = t - kfr::floor(t + half); // [-0.5, 0.5)
   const vec4 au = kfr::abs(u);
   // cos(2 pi u) = -cos(2 pi (0.5 - |u|)), sin keeps its sign
-  const auto far = au > quarter;
-  const vec4 r = kfr::select(far, half - au, au); // [0, 1/4]
+  const auto pastQuarter = au > quarter;
+  const vec4 r = kfr::select(pastQuarter, half - au, au); // [0, 1/4]
   const vec4 r2 = r * r;
   const vec4 sn
       = r
@@ -117,7 +117,7 @@ inline void sincos2pi(vec4 t, vec4& s, vec4& c) noexcept
                        * (vec4(64.935221469818272f)
                           + r2 * (vec4(-85.254007539277524f) + r2 * vec4(56.340648700450132f))));
   s = kfr::select(u < vec4(0.f), -sn, sn);
-  c = kfr::select(far, -cs, cs);
+  c = kfr::select(pastQuarter, -cs, cs);
 }
 
 namespace detail
@@ -382,10 +382,10 @@ inline void fill(Shape& s, int from, vec4 a, vec4 b, vec4 c = vec4(1.f), vec4 e 
   {
     vec4 sz, cz;
     sincos2pi(vec4(0.5f) * b * L, sz, cz);
-    const auto small = kfr::abs(z) < vec4(1e-4f);
-    const vec4 zs = kfr::select(small, one, z);
-    S = kfr::select(small, one, sz / zs);
-    R = kfr::select(small, z * vec4(1.f / 3.f), (sz - z * cz) / (zs * zs));
+    const auto nearZero = kfr::abs(z) < vec4(1e-4f);
+    const vec4 zs = kfr::select(nearZero, one, z);
+    S = kfr::select(nearZero, one, sz / zs);
+    R = kfr::select(nearZero, z * vec4(1.f / 3.f), (sz - z * cz) / (zs * zs));
   }
 
   const vec4 um = c + e * m;
@@ -501,13 +501,13 @@ struct Moments
   {
     vec4 sz, cz;
     sincos2pi(vec4(0.5f) * b * L, sz, cz);
-    const auto small = kfr::abs(z) < vec4(1e-3f);
-    const vec4 zs = kfr::select(small, one, z);
+    const auto nearZero = kfr::abs(z) < vec4(1e-3f);
+    const vec4 zs = kfr::select(nearZero, one, z);
     const vec4 z2 = zs * zs;
-    S = kfr::select(small, one, sz / zs);
-    R = kfr::select(small, z * vec4(1.f / 3.f), (sz - z * cz) / z2);
+    S = kfr::select(nearZero, one, sz / zs);
+    R = kfr::select(nearZero, z * vec4(1.f / 3.f), (sz - z * cz) / z2);
     P = kfr::select(
-        small, vec4(1.f / 3.f), (z2 * sz + vec4(2.f) * zs * cz - vec4(2.f) * sz) / (z2 * zs));
+        nearZero, vec4(1.f / 3.f), (z2 * sz + vec4(2.f) * zs * cz - vec4(2.f) * sz) / (z2 * zs));
   }
 
   const vec4 h = vec4(0.5f) * L;
