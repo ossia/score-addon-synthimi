@@ -76,8 +76,34 @@ enum class SympTuning : int
   Minor,
   Drone,
   Chromatic,
-  Follow
+  Follow,
+  // The same tunings, built on the keys held down instead of on Symp. Root
+  OctavesFollow,
+  FifthsFollow,
+  MajorFollow,
+  MinorFollow,
+  DroneFollow
 };
+
+//! The tuning a "(follow)" mode builds on each key; Off for the other modes
+constexpr SympTuning followedTuning(SympTuning t) noexcept
+{
+  switch(t)
+  {
+    case SympTuning::OctavesFollow:
+      return SympTuning::Octaves;
+    case SympTuning::FifthsFollow:
+      return SympTuning::Fifths;
+    case SympTuning::MajorFollow:
+      return SympTuning::Major;
+    case SympTuning::MinorFollow:
+      return SympTuning::Minor;
+    case SympTuning::DroneFollow:
+      return SympTuning::Drone;
+    default:
+      return SympTuning::Off;
+  }
+}
 
 enum class Body : int
 {
@@ -139,7 +165,7 @@ enum class LfoShape : int
 // without updating its count would silently map it to the default.
 inline constexpr int kEngineCount = 5;
 inline constexpr int kExciterCount = 7;
-inline constexpr int kSympTuningCount = 8;
+inline constexpr int kSympTuningCount = 13;
 inline constexpr int kBodyCount = 9;
 inline constexpr int kPlayModeCount = 3;
 inline constexpr int kPressureCount = 6;
@@ -250,6 +276,8 @@ struct Params
   //! The excitation heard directly: a pick's click, a hammer's thump, the
   //! rosin of a bow
   double exciterLevel = 0.;
+  //! Whether the pitch bend also bends the sympathetic strings
+  bool sympBend = false;
   int voices = kMaxVoices;
   std::array<LfoParams, kLfos> lfos{};
 

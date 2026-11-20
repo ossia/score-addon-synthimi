@@ -88,7 +88,18 @@ public:
 
     // Sympathetic strings
     halp::knob_f32<"Symp. Level", halp::range{0., 4., 0.}> symp_level;
-    halp::combobox_t<"Symp. Tuning", SympTuning> symp_tuning;
+    struct symp_tuning_t : halp::combobox_t<"Symp. Tuning", SympTuning>
+    {
+      // In the order of SympTuning: the value stored is the index
+      struct range
+      {
+        std::string_view values[kSympTuningCount]{
+            "Off",   "Octaves",   "Fifths",           "Major",           "Minor",
+            "Drone", "Chromatic", "Follow",           "Octaves (follow)", "Fifths (follow)",
+            "Major (follow)", "Minor (follow)", "Drone (follow)"};
+        SympTuning init{};
+      };
+    } symp_tuning;
     halp::spinbox_i32<"Symp. Root", halp::range{24, 60, 36}> symp_root;
     halp::time_chooser<"Symp. Decay", halp::range{0.5, 30., 8.}> symp_decay;
 
@@ -129,6 +140,7 @@ public:
     // The mix: the played strings, and their excitation heard directly
     halp::knob_f32<"String Level", halp::range{0., 1., 1.}> string_level;
     halp::knob_f32<"Exciter Level", halp::range{0., 1., 0.}> exciter_level;
+    halp::toggle<"Symp. Bend"> symp_bend;
   } inputs;
 
   struct
@@ -185,6 +197,7 @@ public:
     p.couplingDetune = in.coupling_detune.value;
     p.stringLevel = in.string_level.value;
     p.exciterLevel = in.exciter_level.value;
+    p.sympBend = in.symp_bend.value;
     const auto lfo = [](const auto& target, const auto& shape, const auto& period,
                         const auto& depth, const auto& delay) {
       return LfoParams{target.value, shape.value, period.value, depth.value, delay.value};
@@ -235,7 +248,13 @@ public:
   //! The sympathetic controls do nothing while the bank is off
   using sympathetic_on = halp::enabled_when<
       &ins::symp_tuning, SympTuning::Octaves, SympTuning::Fifths, SympTuning::Major,
-      SympTuning::Minor, SympTuning::Drone, SympTuning::Chromatic, SympTuning::Follow>;
+      SympTuning::Minor, SympTuning::Drone, SympTuning::Chromatic, SympTuning::Follow,
+      SympTuning::OctavesFollow, SympTuning::FifthsFollow, SympTuning::MajorFollow,
+      SympTuning::MinorFollow, SympTuning::DroneFollow>;
+  //! Nor the root in the tunings built on the notes played
+  using sympathetic_rooted = halp::enabled_when<
+      &ins::symp_tuning, SympTuning::Octaves, SympTuning::Fifths, SympTuning::Major,
+      SympTuning::Minor, SympTuning::Drone, SympTuning::Chromatic>;
   //! Nor the body controls without a body
   using body_on = halp::enabled_when<
       &ins::body, Body::Guitar, Body::Violin, Body::Cello, Body::Harp, Body::Gourd,
@@ -366,7 +385,7 @@ public:
         struct
         {
           halp_meta(layout, halp::layouts::container)
-          static constexpr auto condition() { return sympathetic_on{}; }
+          static constexpr auto condition() { return sympathetic_rooted{}; }
           halp::item<&ins::symp_root, halp::label_as("Root")> root;
         } root;
         struct
@@ -375,8 +394,13 @@ public:
           static constexpr auto condition() { return sympathetic_on{}; }
           halp::item<&ins::symp_decay, small_knob_as("Decay")> decay;
         } decay;
+        struct
+        {
+          halp_meta(layout, halp::layouts::container)
+          static constexpr auto condition() { return sympathetic_on{}; }
+          halp::item<&ins::symp_bend, halp::label_as("Bend")> bend;
+        } bend;
         halp::spacing gap{};
-        halp::spacing gap2{};
 
         halp::item<&ins::body> body;
         struct
@@ -478,6 +502,6 @@ public:
 //! The controls a preset stores: every one, so that loading it leaves
 //! nothing of the previous preset behind (score sets only the controls a
 //! preset holds)
-inline constexpr int kPresetPorts = 61;
+inline constexpr int kPresetPorts = 62;
 static_assert(avnd::parameter_input_introspection<Cordito>::size == kPresetPorts);
 }
