@@ -208,6 +208,7 @@ public:
     symp.count = 0;
     symp.tuning = SympTuning::Off;
     symp.root = -1;
+    symp.keyCount = 0;
     symp.clear();
 
     body.type = Body::None;
@@ -293,6 +294,7 @@ public:
               v.state = Voice::State::Stealing;
           }
           monoStack.clear();
+          symp.keyCount = 0;
           symp.clear();
           body.reset();
         }
@@ -307,6 +309,7 @@ public:
           }
           if(monoChannel == ch)
             monoStack.clear();
+          symp.keysOff(ch);
         }
         break;
       case 0xD0:
@@ -319,6 +322,7 @@ public:
         if(size < 3)
           return;
         cs.bend = std::clamp(((d2 << 7) | d1) / 8192. - 1., -1., 1.);
+        sympBendChannel = ch;
         break;
       default:
         break;
@@ -421,6 +425,7 @@ public:
     return n;
   }
   const Voice& voice(int i) const noexcept { return voices[std::size_t(i)]; }
+  const SympBank& sympathetic() const noexcept { return symp; }
   double preLimiterPeak = 0.;
 
 private:
@@ -500,6 +505,9 @@ private:
   //! Held notes in Mono and Legato, last on top: in place, never allocated
   ossia::static_vector<int, 128> monoStack;
   int monoChannel = 0;
+  //! The bank is shared while bends are per channel: it takes the bend of
+  //! the channel that last played a note or moved its wheel
+  int sympBendChannel = 0;
 
   static Voice resetVoice(const Voice& v) noexcept
   {
@@ -517,6 +525,9 @@ private:
   {
     if(p.sympTuning == SympTuning::Follow)
       symp.noteOn(note);
+    // Whatever the tuning: one chosen while keys are down builds on them
+    symp.keyOn(note, ch);
+    sympBendChannel = ch;
 
     if(p.playMode != PlayMode::Poly)
     {
@@ -648,6 +659,7 @@ private:
     // Always: a note-off arriving after a switch from Mono must not let a
     // later one glide back to a key that is not held any more
     ossia::remove_erase(monoStack, note);
+    symp.keyOff(note, ch);
 
     bool voice0Done = false;
     if(p.playMode != PlayMode::Poly)
@@ -908,6 +920,8 @@ private:
       symp.configure(SympTuning::Off, p.sympRoot, p.sympDecay, fs);
       symp.clear();
     }
+    symp.bendTo(
+        p.sympBend ? channels[std::size_t(sympBendChannel)].bend * p.bendRange : 0.);
     spreadSm += 16. * levelCoef * (p.spread - spreadSm);
 
     // Filters that only decay settle into subnormals where nothing flushes

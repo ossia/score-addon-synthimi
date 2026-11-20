@@ -639,7 +639,18 @@ TEST_CASE("Cordito: the enumerations keep their order", "[synthimi][cordito]")
   CHECK(names(Exciter{}) == V{"Pick", "Finger", "Hammer", "Mallet", "Burst", "Bow", "EBow"});
   CHECK(
       names(SympTuning{})
-      == V{"Off", "Octaves", "Fifths", "Major", "Minor", "Drone", "Chromatic", "Follow"});
+      == V{"Off", "Octaves", "Fifths", "Major", "Minor", "Drone", "Chromatic", "Follow",
+           "OctavesFollow", "FifthsFollow", "MajorFollow", "MinorFollow", "DroneFollow"});
+  // What the combobox shows, entry for entry
+  const decltype(Cordito::ins::symp_tuning)::range shown{};
+  CHECK(
+      V(std::begin(shown.values), std::end(shown.values))
+      == V{"Off", "Octaves", "Fifths", "Major", "Minor", "Drone", "Chromatic", "Follow",
+           "Octaves (follow)", "Fifths (follow)", "Major (follow)", "Minor (follow)",
+           "Drone (follow)"});
+  CHECK(int(SympTuning::Follow) == 7);
+  CHECK(int(SympTuning::OctavesFollow) == 8);
+  CHECK(int(SympTuning::DroneFollow) == 12);
   CHECK(
       names(Body{})
       == V{"None", "Guitar", "Violin", "Cello", "Harp", "Gourd", "Soundboard", "Box",
@@ -918,7 +929,8 @@ TEST_CASE("Cordito: sympathetic strings resonate, they do not amplify", "[synthi
     return std::pair{rmsMax, rig.s->preLimiterPeak};
   };
   for(SympTuning t : {SympTuning::Follow, SympTuning::Octaves, SympTuning::Major,
-                      SympTuning::Chromatic, SympTuning::Drone})
+                      SympTuning::Chromatic, SympTuning::Drone, SympTuning::OctavesFollow,
+                      SympTuning::MajorFollow, SympTuning::DroneFollow})
     for(double sympDecay : {8., 30.})
       for(int root : {28, 36, 48})
       {
@@ -1542,6 +1554,622 @@ TEST_CASE("Cordito: hammering one key a thousand times stays bounded", "[synthim
   }
 }
 
+namespace
+{
+//! Sympathetic strings alone: the played ones drive them but are not heard
+Params following(SympTuning t)
+{
+  Params p = plain(Engine::Pluck);
+  p.sympLevel = 1.;
+  p.sympTuning = t;
+  p.sympDecay = 8.;
+  p.stringLevel = 0.;
+  p.release = 0.05;
+  p.sanitize();
+  return p;
+}
+
+//! The notes the strings in use are tuned to, or are being retuned to
+std::vector<double> tuned(const Rig& rig)
+{
+  const auto& bank = rig.s->sympathetic();
+  std::vector<double> v;
+  for(int i = 0; i < bank.count; i++)
+  {
+    const auto& s = bank.strings[std::size_t(i)];
+    v.push_back(s.retune ? s.next : s.note);
+  }
+  std::sort(v.begin(), v.end());
+  return v;
+}
+
+//! Both sides: the strings alternate between them
+std::vector<double> mono(Rig& rig, double seconds, const Params& p)
+{
+  std::vector<double> r;
+  auto l = rig.run(seconds, p, &r);
+  for(std::size_t i = 0; i < l.size(); i++)
+    l[i] += r[i];
+  return l;
+}
+
+bool has(const std::vector<double>& v, double note)
+{
+  return std::find(v.begin(), v.end(), note) != v.end();
+}
+
+constexpr SympTuning kFollowing[]{
+    SympTuning::OctavesFollow, SympTuning::FifthsFollow, SympTuning::MajorFollow,
+    SympTuning::MinorFollow, SympTuning::DroneFollow};
+}
+
+TEST_CASE("Cordito: the tunings on Symp. Root are where they were", "[synthimi][cordito]")
+{
+  using V = std::vector<double>;
+  auto table = [](SympTuning t, int root) {
+    Params p = following(t);
+    p.sympRoot = root;
+    Rig rig;
+    // Keys change nothing to them
+    rig.on(50, 100, p);
+    rig.run(0.05, p);
+    rig.on(61, 100, p);
+    rig.run(0.05, p);
+    CHECK(rig.s->sympathetic().norm == rig.s->sympathetic().count);
+    return tuned(rig);
+  };
+  CHECK(table(SympTuning::Off, 36).empty());
+  CHECK(table(SympTuning::Octaves, 36) == V{36, 48, 60, 72});
+  CHECK(table(SympTuning::Fifths, 40) == V{40, 47, 52, 59, 64, 71});
+  CHECK(table(SympTuning::Major, 36) == V{36, 40, 43, 48, 52, 55, 60});
+  CHECK(table(SympTuning::Minor, 45) == V{45, 48, 52, 57, 60, 64, 69});
+  CHECK(table(SympTuning::Drone, 36) == V{24, 31, 36, 36.04, 43, 48});
+  CHECK(table(SympTuning::Chromatic, 36) == V{36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47});
+  CHECK(table(SympTuning::Follow, 36) == V{50, 61});
+}
+
+TEST_CASE("Cordito: one key in a (follow) tuning is that tuning on the key", "[synthimi][cordito]")
+{
+  using V = std::vector<double>;
+  auto render = [](SympTuning t, int root, int note, V* table = nullptr) {
+    Params p = following(t);
+    p.sympRoot = root;
+    Rig rig;
+    rig.on(note, 100, p);
+    std::vector<double> r;
+    auto l = rig.run(1., p, &r);
+    rig.off(note, p);
+    const auto l2 = rig.run(0.5, p);
+    l.insert(l.end(), r.begin(), r.end());
+    l.insert(l.end(), l2.begin(), l2.end());
+    if(table)
+      *table = tuned(rig);
+    return l;
+  };
+  for(int note : {48, 57, 60})
+  {
+    INFO("note " << note);
+    V fixed, follow;
+    // The same strings in the same places: the same sound to the last bit,
+    // and Symp. Root has no say in it
+    for(auto [a, b] : {std::pair{SympTuning::Octaves, SympTuning::OctavesFollow},
+                       std::pair{SympTuning::Fifths, SympTuning::FifthsFollow},
+                       std::pair{SympTuning::Major, SympTuning::MajorFollow},
+                       std::pair{SympTuning::Minor, SympTuning::MinorFollow}})
+    {
+      INFO("tuning " << int(b));
+      const auto ref = render(a, note, note, &fixed);
+      CHECK(rms(ref, 48000., 0.5, 1.) > 1e-5);
+      CHECK(render(b, 24, note, &follow) == ref);
+      CHECK(follow == fixed);
+      CHECK(render(b, 60, note) == ref);
+    }
+    // Drone has the same notes, the unisons first
+    render(SympTuning::Drone, note, note, &fixed);
+    const auto low = render(SympTuning::DroneFollow, 24, note, &follow);
+    CHECK(follow == fixed);
+    CHECK(render(SympTuning::DroneFollow, 60, note) == low);
+  }
+}
+
+TEST_CASE("Cordito: the (follow) tunings follow the keys", "[synthimi][cordito]")
+{
+  // The third of F is heard once F is played, in Major (follow) and not in
+  // Major on a root of C
+  auto thirdOfF = [](SympTuning t) {
+    Params p = following(t);
+    p.sympRoot = 48;
+    Rig rig;
+    rig.on(48, 110, p);
+    const auto a = mono(rig, 1., p);
+    rig.off(48, p);
+    rig.on(53, 110, p);
+    const auto b = mono(rig, 1., p);
+    const double f = 220.;
+    return std::pair{goertzel(a, rig.fs, f, 0.5, 1.), goertzel(b, rig.fs, f, 0.5, 1.)};
+  };
+  const auto [fixedBefore, fixedAfter] = thirdOfF(SympTuning::Major);
+  const auto [before, after] = thirdOfF(SympTuning::MajorFollow);
+  INFO(fixedBefore << " " << fixedAfter << " / " << before << " " << after);
+  CHECK(before == fixedBefore);
+  CHECK(after > 10. * before);
+  CHECK(after > 10. * fixedAfter);
+
+  // Minor (follow) has the minor third instead
+  {
+    Params p = following(SympTuning::MinorFollow);
+    Rig rig;
+    rig.on(53, 110, p);
+    const auto l = mono(rig, 1., p);
+    CHECK(
+        goertzel(l, rig.fs, 440. * std::exp2((56 - 69) / 12.), 0.5, 1.)
+        > 10. * goertzel(l, rig.fs, 220., 0.5, 1.));
+  }
+}
+
+TEST_CASE("Cordito: (follow) gives the strings to every key held", "[synthimi][cordito]")
+{
+  Params p = following(SympTuning::MajorFollow);
+  Rig rig;
+  for(int n : {60, 64, 67})
+  {
+    rig.on(n, 100, p);
+    rig.run(0.2, p);
+  }
+  auto t = tuned(rig);
+  INFO("strings " << t.size());
+  // Every string in use, each on a note of its own
+  CHECK(t.size() == std::size_t(kMaxSymp));
+  CHECK(std::adjacent_find(t.begin(), t.end()) == t.end());
+  // Each key has its unison, third, fifth and octave: the far intervals of
+  // the oldest keys are what did not fit
+  for(int n : {60, 64, 67})
+    for(int i : {0, 4, 7, 12})
+    {
+      INFO(n << " + " << i);
+      CHECK(has(t, n + i));
+    }
+  CHECK(has(t, 67 + 16));
+  CHECK(!has(t, 60 + 24));
+
+  // Octaves fit whole
+  Params q = following(SympTuning::OctavesFollow);
+  Rig oct;
+  for(int n : {48, 55, 52})
+    oct.on(n, 100, q);
+  oct.run(0.1, q);
+  CHECK(tuned(oct) == std::vector<double>{48, 52, 55, 60, 64, 67, 72, 76, 79, 84, 88, 91});
+  // Notes out of the strings' range are not given one
+  Rig high;
+  high.on(120, 100, q);
+  high.run(0.1, q);
+  CHECK(tuned(high).empty());
+}
+
+TEST_CASE("Cordito: (follow) leaves ringing strings alone, and fades those it retunes",
+          "[synthimi][cordito]")
+{
+  Params p = following(SympTuning::MajorFollow);
+  Rig rig;
+  const auto& bank = rig.s->sympathetic();
+  auto slotOf = [&](double note) {
+    for(int i = 0; i < bank.count; i++)
+      if(bank.strings[std::size_t(i)].note == note)
+        return i;
+    return -1;
+  };
+  rig.on(48, 110, p);
+  rig.run(0.5, p);
+  rig.off(48, p);
+  // Released: nothing is retuned, the strings ring on
+  const auto held = tuned(rig);
+  const auto tail = rig.run(1., p);
+  CHECK(tuned(rig) == held);
+  CHECK(rms(tail, rig.fs, 0.5, 1.) > 1e-5);
+
+  // G shares its unison and its octave with the fifths of C: those strings
+  // stay where they are, with what rings in them
+  const int g = slotOf(55), g2 = slotOf(67);
+  REQUIRE(g >= 0);
+  REQUIRE(g2 >= 0);
+  const double ringing = SympBank::loudness(bank.strings[std::size_t(g2)]);
+  REQUIRE(ringing > SympBank::kSilent);
+  rig.on(55, 110, p);
+  rig.run(1. / rig.fs, p);
+  CHECK(slotOf(55) == g);
+  CHECK(slotOf(67) == g2);
+  CHECK(SympBank::loudness(bank.strings[std::size_t(g2)]) > 0.5 * ringing);
+  CHECK(bank.strings[std::size_t(g2)].gain == 1.);
+  // C's 7 strings and the 5 more that G needed
+  CHECK(bank.count == kMaxSymp);
+  for(int n : {48, 52, 55, 60, 64, 67, 72, 59, 62, 71, 74, 79})
+    CHECK(has(tuned(rig), n));
+  rig.run(0.5, p);
+  rig.off(55, p);
+
+  // Every string is taken: the next keys retune ringing ones. A string never
+  // changes its note while it is heard: either it has faded out, or it was
+  // silent when the key came.
+  std::array<double, kMaxSymp> note{}, gain{};
+  std::array<bool, kMaxSymp> silent{};
+  int retuned = 0;
+  bool clean = true, finite = true;
+  double peak = 0.;
+  const int keys[]{50, 57, 49, 61, 54, 51};
+  for(int k = 0; k < 6; k++)
+  {
+    rig.on(keys[k], 110, p);
+    for(int i = 0; i < int(0.08 * rig.fs); i++)
+    {
+      for(int j = 0; j < kMaxSymp; j++)
+      {
+        note[std::size_t(j)] = bank.strings[std::size_t(j)].note;
+        gain[std::size_t(j)] = bank.strings[std::size_t(j)].gain;
+        silent[std::size_t(j)]
+            = i == 0 && SympBank::loudness(bank.strings[std::size_t(j)]) < SympBank::kSilent;
+      }
+      const auto l = rig.run(1. / rig.fs, p);
+      finite = finite && ossia::safe_isfinite(l[0]);
+      peak = std::max(peak, std::abs(l[0]));
+      for(int j = 0; j < kMaxSymp; j++)
+        if(bank.strings[std::size_t(j)].note != note[std::size_t(j)])
+        {
+          retuned += silent[std::size_t(j)] ? 0 : 1;
+          clean = clean && (silent[std::size_t(j)] || gain[std::size_t(j)] <= 2. * bank.fadeStep);
+        }
+    }
+    rig.off(keys[k], p);
+    INFO("key " << keys[k]);
+    for(int i : {0, 4, 7, 12, 16, 19, 24})
+      CHECK(has(tuned(rig), keys[k] + i));
+  }
+  CHECK(retuned >= 6);
+  CHECK(clean);
+  CHECK(finite);
+  CHECK(peak < 1.);
+  // Fades end: every string is back at its full level
+  rig.run(0.1, p);
+  for(int j = 0; j < bank.count; j++)
+  {
+    CHECK(bank.strings[std::size_t(j)].gain == 1.);
+    CHECK(!bank.strings[std::size_t(j)].retune);
+  }
+}
+
+TEST_CASE("Cordito: (follow) takes over the strings of the tuning before it", "[synthimi][cordito]")
+{
+  Params p = following(SympTuning::Major);
+  p.sympRoot = 48;
+  Rig rig;
+  rig.on(48, 110, p);
+  rig.run(0.5, p);
+  rig.off(48, p);
+  // No key down: the strings stay as they are, and ring
+  p.sympTuning = SympTuning::MinorFollow;
+  const auto l = rig.run(0.5, p);
+  CHECK(tuned(rig) == std::vector<double>{48, 52, 55, 60, 64, 67, 72});
+  CHECK(rms(l, rig.fs, 0.2, 0.5) > 1e-5);
+  // A tuning chosen while keys are down builds on them at once
+  rig.on(50, 110, p);
+  rig.on(57, 110, p);
+  p.sympTuning = SympTuning::OctavesFollow;
+  rig.run(0.2, p);
+  for(int n : {50, 57, 62, 69, 74, 81, 86, 93})
+    CHECK(has(tuned(rig), n));
+  // And Symp. Decay still reaches the strings
+  const double before = rig.s->sympathetic().strings[0].loss.b;
+  p.sympDecay = 1.;
+  rig.run(0.01, p);
+  CHECK(rig.s->sympathetic().strings[0].loss.b != before);
+  // Back on a root: that tuning, whole
+  p.sympTuning = SympTuning::Octaves;
+  p.sympRoot = 36;
+  rig.run(0.2, p);
+  CHECK(tuned(rig) == std::vector<double>{36, 48, 60, 72});
+  CHECK(rig.s->sympathetic().norm == 4);
+}
+
+TEST_CASE("Cordito: (follow) under a storm of notes stays finite, bounded, in place",
+          "[synthimi][cordito]")
+{
+  for(SympTuning t : kFollowing)
+  {
+    Params p = following(t);
+    p.sympLevel = 4.;
+    p.sympDecay = 30.;
+    p.stringLevel = 1.;
+    Rig rig;
+    Rng rng;
+    bool finite = true;
+    double peak = 0.;
+    std::vector<double> l(64), r(64);
+    g_allocs = 0;
+    g_watch = true;
+    for(int block = 0; block < 3000; block++)
+    {
+      // Several keys a block at times, on a few channels, with pedals,
+      // panics and tunings changing under them
+      for(int m = int(rng.next() % 3); m > 0; m--)
+      {
+        const unsigned u = rng.next() % 100;
+        const auto ch = (unsigned char)(rng.next() % 3);
+        const auto note = (unsigned char)(rng.next() % 128);
+        if(u < 55)
+          rig.send(0x90 | ch, note, (unsigned char)(rng.next() % 128), p);
+        else if(u < 95)
+          rig.send(0x80 | ch, note, 0, p);
+        else if(u < 97)
+          rig.send(0xB0 | ch, 64, (unsigned char)(rng.next() % 128), p);
+        else if(u < 99)
+          rig.send(0xB0 | ch, 123, 0, p);
+        else
+          rig.send(0xB0 | ch, 120, 0, p);
+      }
+      if(block % 500 == 499)
+        p.sympTuning = kFollowing[rng.next() % 5];
+      if(block % 700 == 699)
+        p.sympDecay = 0.5 + 29.5 * rng.uniform();
+      rig.s->render(p, l.data(), r.data(), 64);
+      for(int i = 0; i < 64; i++)
+      {
+        finite = finite && ossia::safe_isfinite(l[std::size_t(i)])
+                 && ossia::safe_isfinite(r[std::size_t(i)]);
+        peak = std::max({peak, std::abs(l[std::size_t(i)]), std::abs(r[std::size_t(i)])});
+      }
+    }
+    g_watch = false;
+    INFO("tuning " << int(t) << " peak " << peak);
+    CHECK(finite);
+    CHECK(peak <= 1.);
+    CHECK(g_allocs == 0);
+    const auto& bank = rig.s->sympathetic();
+    CHECK(bank.count <= kMaxSymp);
+    CHECK(bank.keyCount <= SympBank::kMaxKeys);
+    // Left alone, the bank dies out
+    for(int ch = 0; ch < 3; ch++)
+    {
+      rig.send(0xB0 | ch, 64, 0, p);
+      rig.send(0xB0 | ch, 123, 0, p);
+    }
+    p.sympDecay = 0.5;
+    rig.run(8., p);
+    const auto tail = rig.run(0.1, p);
+    CHECK(rms(tail, rig.fs, 0., 0.1) < 1e-6);
+    for(int i = 0; i < bank.count; i++)
+      CHECK(ossia::safe_isfinite(bank.strings[std::size_t(i)].loss.y));
+  }
+}
+
+namespace
+{
+//! Bank and wheel: `on` whether the strings follow it
+Params bending(SympTuning t, bool on)
+{
+  Params p = following(t);
+  p.sympRoot = 48;
+  p.bendRange = 2.;
+  p.sympBend = on;
+  p.sanitize();
+  return p;
+}
+
+void wheel(Rig& rig, double x, const Params& p, int ch = 0)
+{
+  const int v = std::clamp(int(std::lround(8192. + 8192. * x)), 0, 16383);
+  rig.send((unsigned char)(0xE0 | ch), (unsigned char)(v & 0x7F), (unsigned char)(v >> 7), p);
+}
+}
+
+TEST_CASE("Cordito: Symp. Bend lets the wheel bend the sympathetic strings", "[synthimi][cordito]")
+{
+  // A note left to ring in the bank alone, then the wheel: on a root, on the
+  // notes played, on the keys held
+  for(SympTuning t : {SympTuning::Octaves, SympTuning::Follow, SympTuning::OctavesFollow})
+    for(bool on : {false, true})
+      for(double x : {1., -0.5})
+      {
+        Params p = bending(t, on);
+        Rig rig;
+        rig.on(48, 110, p);
+        rig.run(0.5, p);
+        rig.off(48, p);
+        rig.run(0.3, p);
+        const auto before = mono(rig, 0.5, p);
+        wheel(rig, x, p);
+        const auto after = mono(rig, 1., p);
+        const double st = p.bendRange * std::clamp(std::lround(8192. + 8192. * x), 0l, 16383l) / 8192.
+                          - p.bendRange;
+        INFO("tuning " << int(t) << (on ? " on" : " off") << " wheel " << x);
+        for(int note : {48, 60})
+        {
+          if(t == SympTuning::Follow && note != 48)
+            continue;
+          const double f = 440. * std::exp2((note - 69) / 12.);
+          const double moved = f * std::exp2(st / 12.);
+          CHECK(std::abs(cents(peakNear(before, rig.fs, f, 0.02 * f, 0.1, 0.5), f)) < 3.);
+          const double there = on ? moved : f, gone = on ? f : moved;
+          INFO("note " << note << ": "
+                       << cents(peakNear(after, rig.fs, there, 0.02 * there, 0.3, 1.), there)
+                       << " cents");
+          CHECK(std::abs(cents(peakNear(after, rig.fs, there, 0.02 * there, 0.3, 1.), there)) < 3.);
+          CHECK(
+              goertzel(after, rig.fs, there, 0.3, 1.) > 10. * goertzel(after, rig.fs, gone, 0.3, 1.));
+        }
+        // Still ringing: the bend moved the sound, it did not restart it
+        CHECK(rms(after, rig.fs, 0.5, 1.) > 0.3 * rms(before, rig.fs, 0., 0.5));
+      }
+}
+
+TEST_CASE("Cordito: without Symp. Bend the wheel leaves the bank as it is", "[synthimi][cordito]")
+{
+  for(SympTuning t : {SympTuning::Major, SympTuning::Follow, SympTuning::MajorFollow})
+  {
+    INFO("tuning " << int(t));
+    // Off: the strings never leave the delay they were tuned with
+    {
+      Params p = bending(t, false);
+      Rig rig;
+      const auto& bank = rig.s->sympathetic();
+      bool still = true;
+      for(int k = 0; k < 40; k++)
+      {
+        if(k % 4 == 0)
+          rig.on(48 + k / 4, 100, p);
+        wheel(rig, std::sin(0.7 * k), p);
+        rig.run(0.02, p);
+        for(int i = 0; i < bank.count; i++)
+        {
+          const auto& s = bank.strings[std::size_t(i)];
+          still = still && s.cur == s.d && s.glide == 0 && s.m == int(s.d);
+        }
+      }
+      CHECK(still);
+      CHECK(bank.bend == 0.);
+    }
+    // On, with the wheel at rest: the same sound to the last bit, and the
+    // same again once the wheel is back from a bend
+    auto render = [&](bool on, bool excursion) {
+      Params p = bending(t, on);
+      Rig rig;
+      rig.on(48, 100, p);
+      rig.run(0.2, p);
+      if(excursion)
+      {
+        wheel(rig, 0.8, p);
+        rig.run(0.2, p);
+        wheel(rig, 0., p);
+        rig.run(0.2, p);
+        // Back at rest: the strings are tuned as they were
+        const auto& bank = rig.s->sympathetic();
+        for(int i = 0; i < bank.count; i++)
+        {
+          const auto& s = bank.strings[std::size_t(i)];
+          CHECK(s.cur == s.d);
+          CHECK(s.glide == 0);
+        }
+        CHECK(bank.bend == 0.);
+        return std::vector<double>{};
+      }
+      rig.off(48, p);
+      rig.on(55, 100, p);
+      std::vector<double> r;
+      auto l = rig.run(0.5, p, &r);
+      l.insert(l.end(), r.begin(), r.end());
+      return l;
+    };
+    CHECK(render(true, false) == render(false, false));
+    render(true, true);
+  }
+}
+
+TEST_CASE("Cordito: a bend slides the sympathetic strings, without a click or an allocation",
+          "[synthimi][cordito]")
+{
+  for(SympTuning t : {SympTuning::Fifths, SympTuning::FifthsFollow})
+  {
+    INFO("tuning " << int(t));
+    Params p = bending(t, true);
+    Rig rig;
+    const auto& bank = rig.s->sympathetic();
+    rig.on(48, 110, p);
+    rig.run(0.5, p);
+    rig.off(48, p);
+    rig.run(0.5, p);
+    auto roughness = [&](double seconds, double* slide) {
+      // The largest step of the second difference, which a break in the
+      // sound shows in, and of a string's delay
+      double worst = 0., a = 0., b = 0.;
+      std::array<double, kMaxSymp> cur{};
+      const int n = int(seconds * rig.fs);
+      for(int i = 0; i < n; i++)
+      {
+        for(int j = 0; j < bank.count; j++)
+          cur[std::size_t(j)] = bank.strings[std::size_t(j)].cur;
+        double xl = 0., xr = 0.;
+        rig.s->render(p, &xl, &xr, 1);
+        const double x = xl + xr;
+        if(i >= 2)
+          worst = std::max(worst, std::abs(x - 2. * a + b));
+        b = a;
+        a = x;
+        if(slide)
+          for(int j = 0; j < bank.count; j++)
+            *slide = std::max(*slide, std::abs(bank.strings[std::size_t(j)].cur - cur[std::size_t(j)]));
+      }
+      return worst;
+    };
+    const double calm = roughness(0.1, nullptr);
+    REQUIRE(calm > 0.);
+    // The wheel thrown from one end to the other, as a controller sends it:
+    // in one step
+    double slide = 0.;
+    g_allocs = 0;
+    g_watch = true;
+    wheel(rig, 1., p);
+    double rough = roughness(0.05, &slide);
+    wheel(rig, -1., p);
+    rough = std::max(rough, roughness(0.05, &slide));
+    wheel(rig, 0., p);
+    rough = std::max(rough, roughness(0.05, &slide));
+    g_watch = false;
+    INFO("calm " << calm << " bending " << rough << " slide " << slide);
+    CHECK(g_allocs == 0);
+    // A delay moves by a fraction of a sample per sample, never by a jump
+    CHECK(slide > 0.);
+    CHECK(slide < 0.5);
+    CHECK(rough < 3. * calm);
+  }
+
+  // Any wheel, any range, on any channel, the control flipped under it
+  for(SympTuning t : {SympTuning::Chromatic, SympTuning::Follow, SympTuning::DroneFollow})
+  {
+    Params p = bending(t, true);
+    p.sympLevel = 4.;
+    p.stringLevel = 1.;
+    Rig rig;
+    Rng rng;
+    bool finite = true, inside = true;
+    double peak = 0.;
+    std::vector<double> l(64), r(64);
+    const auto& bank = rig.s->sympathetic();
+    g_allocs = 0;
+    g_watch = true;
+    for(int block = 0; block < 3000; block++)
+    {
+      const unsigned u = rng.next() % 100;
+      const int ch = int(rng.next() % 3);
+      if(u < 30)
+        wheel(rig, 2. * rng.uniform() - 1., p, ch);
+      else if(u < 45)
+        rig.on(int(rng.next() % 128), 100, p, ch);
+      else if(u < 55)
+        rig.off(int(rng.next() % 128), p, ch);
+      if(block % 200 == 199)
+        p.bendRange = double(rng.next() % 49);
+      if(block % 330 == 329)
+        p.sympBend = !p.sympBend;
+      rig.s->render(p, l.data(), r.data(), 64);
+      for(int i = 0; i < 64; i++)
+      {
+        finite = finite && ossia::safe_isfinite(l[std::size_t(i)])
+                 && ossia::safe_isfinite(r[std::size_t(i)]);
+        peak = std::max({peak, std::abs(l[std::size_t(i)]), std::abs(r[std::size_t(i)])});
+      }
+      for(int i = 0; i < bank.count; i++)
+      {
+        const auto& s = bank.strings[std::size_t(i)];
+        inside = inside && s.cur >= 2. && s.m + 2 <= s.line.mask;
+      }
+    }
+    g_watch = false;
+    INFO("tuning " << int(t) << " peak " << peak);
+    CHECK(finite);
+    CHECK(inside);
+    CHECK(peak <= 1.);
+    CHECK(g_allocs == 0);
+  }
+}
+
 TEST_CASE("Cordito: any port value, any MIDI: finite, bounded, no allocation", "[synthimi][cordito]")
 {
   // Through the processor itself, so its clamping of the ports is covered:
@@ -1583,12 +2211,13 @@ TEST_CASE("Cordito: any port value, any MIDI: finite, bounded, no allocation", "
     {
       in.engine.value = Engine(int(rng.next() % 5));
       in.exciter.value = Exciter(int(rng.next() % 8));
-      in.symp_tuning.value = SympTuning(int(rng.next() % 9));
+      in.symp_tuning.value = SympTuning(int(rng.next() % 14));
       in.body.value = Body(int(rng.next() % 10));
       in.play_mode.value = PlayMode(int(rng.next() % 4));
       in.pressure.value = Pressure(int(rng.next() % 7));
       in.modes.value = int(rng.next() % 80) - 10;
       in.symp_root.value = int(rng.next() % 100);
+      in.symp_bend.value = rng.next() % 2 == 0;
       in.voices.value = int(rng.next() % 20) - 2;
       in.bend_range.value = int(rng.next() % 60);
       for(auto [target, shape, period, depth, delay] :

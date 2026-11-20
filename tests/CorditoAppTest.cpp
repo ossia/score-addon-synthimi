@@ -13,6 +13,9 @@
 #include <Process/ProcessList.hpp>
 
 #include <score/graphics/RectItem.hpp>
+#include <score/model/EntitySerialization.hpp>
+#include <score/plugins/SerializableHelpers.hpp>
+#include <score/serialization/JSONVisitor.hpp>
 #include <score/graphics/widgets/QGraphicsKnob.hpp>
 
 #include <ossia/network/value/value_conversion.hpp>
@@ -42,7 +45,7 @@ namespace
 constexpr auto kUuid = "3c8e5f1a-9d27-4b6e-a0c4-7f2d18e95b36";
 
 // The preset format stores values by port index: this is the frozen order
-constexpr std::array<std::string_view, 62> kPorts{
+constexpr std::array<std::string_view, 63> kPorts{
     "Input",        "Exciter",      "Hardness",    "Position",   "Force",
     "Noise",        "Engine",       "Tune",        "Fine",       "Decay",
     "Brightness",   "Stiffness",    "Tension",     "Detune",     "Material",
@@ -56,7 +59,7 @@ constexpr std::array<std::string_view, 62> kPorts{
     "LFO 2 Target", "LFO 2 Shape",  "LFO 2 Period", "LFO 2 Depth", "LFO 2 Delay",
     "LFO 3 Target", "LFO 3 Shape",  "LFO 3 Period", "LFO 3 Depth", "LFO 3 Delay",
     "LFO 4 Target", "LFO 4 Shape",  "LFO 4 Period", "LFO 4 Depth", "LFO 4 Delay",
-    "String Level", "Exciter Level"};
+    "String Level", "Exciter Level", "Symp. Bend"};
 
 Process::ProcessModel* addCordito(const score::GUIApplicationContext&, score::Document& doc)
 {
@@ -130,6 +133,64 @@ TEST_CASE("Cordito: the ports are in the order the presets use", "[synthimi][cor
       CHECK(proc->inlets()[i]->name().toStdString() == kPorts[i]);
     }
     REQUIRE(proc->outlets().size() == 1);
+  });
+}
+
+TEST_CASE("Cordito: a document saved before Symp. Bend loads with it off", "[synthimi][cordito]")
+{
+  score::test::run_in_app([](const score::GUIApplicationContext& ctx) {
+    auto* doc = score::test::new_document(ctx);
+    REQUIRE(doc);
+    auto* original = addCordito(ctx, *doc);
+    if(!original)
+      SKIP("Cordito is not built");
+    // Away from their defaults, the control that came later included
+    for(auto* port : original->inlets())
+      if(auto* c = qobject_cast<Process::ControlInlet*>(port))
+      {
+        if(c->name() == "Symp. Bend")
+          c->setValue(true);
+        else if(c->name() == "Symp. Tuning")
+          c->setValue(int(crd::SympTuning::MajorFollow));
+        else if(c->name() == "Bend Range")
+          c->setValue(7);
+        else if(c->name() == "Exciter Level")
+          c->setValue(0.25f);
+      }
+
+    JSONReader writer;
+    writer.readFrom(*original);
+    auto json = readJson(writer.toByteArray());
+    auto& saved = json["Inlets"];
+    REQUIRE(saved.Size() == kPorts.size());
+    REQUIRE(JsonValue{saved[saved.Size() - 1]["Custom"]}.toString() == "Symp. Bend");
+    saved.Erase(saved.End() - 1);
+
+    auto& processes = ctx.interfaces<Process::ProcessFactoryList>();
+    JSONObject::Deserializer des{json};
+    std::unique_ptr<Process::ProcessModel> loaded{
+        deserialize_interface(processes, des, doc->context(), &doc->model())};
+    REQUIRE(loaded);
+    REQUIRE(loaded->inlets().size() == kPorts.size());
+    for(std::size_t i = 0; i < kPorts.size(); i++)
+    {
+      INFO(kPorts[i]);
+      auto* port = loaded->inlets()[i];
+      CHECK(port->id().val() == int(i));
+      CHECK(port->name().toStdString() == kPorts[i]);
+      auto* was = qobject_cast<Process::ControlInlet*>(original->inlets()[i]);
+      auto* is = qobject_cast<Process::ControlInlet*>(port);
+      if(!was)
+        continue;
+      REQUIRE(is);
+      if(kPorts[i] == "Symp. Bend")
+        CHECK(is->value() == ossia::value{false});
+      else
+        CHECK(is->value() == was->value());
+    }
+    CHECK(!paramsOf(*loaded).sympBend);
+    CHECK(paramsOf(*loaded).sympTuning == crd::SympTuning::MajorFollow);
+    CHECK(paramsOf(*original).sympBend);
   });
 }
 
